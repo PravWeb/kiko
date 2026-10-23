@@ -1,0 +1,27 @@
+[project]
+name = "local-voice-ai-backend"
+version = "0.2.0"
+requires-python = ">=3.12"
+dependencies = [
+    "ddgs>=9.16.0",
+    "fastapi>=0.115",
+    "faster-whisper>=1.2",
+    "kokoro-onnx>=0.6.1",
+    "llama-cpp-python==0.3.19",
+    "numpy>=2",
+    "psutil>=5.9",
+    "pypdf>=6.21.2",
+    "python-multipart>=0.0.9",
+    "soundfile>=0.12",
+    "uvicorn[standard]>=0.30",
+]
+
+[[tool.uv.index]]
+name = "llama-wheels"
+url = "https://abetlen.github.io/llama-cpp-python/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+llama-cpp-python = [
+    { index = "llama-wheels", marker = "sys_platform == 'win32'" },
+]

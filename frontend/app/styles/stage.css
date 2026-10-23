@@ -1,0 +1,47 @@
+/* ── layout: the chat fills the window ──────────────────────────────── */
+
+.main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  min-width: 0;
+}
+.main .panel {
+  flex: 1;
+  min-width: 0;
+  max-width: 1100px;
+  margin: 0 auto;
+  width: 100%;
+}
+@media (max-width: 900px) {
+  .main { min-height: 480px; }
+}
+
+/* now-speaking karaoke strip (above composer) */
+.karaoke-strip {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--stroke);
+  background: rgba(8, 10, 18, 0.35);
+  min-height: 36px;
+  flex-wrap: wrap;
+}
+.karaoke-strip .note {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9px;
+  letter-spacing: 1.8px;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  flex-shrink: 0;
+}
+.karaoke { display: inline; }
+.karaoke-word {
+  display: inline-block;
+  margin-right: 4px;
+  color: var(--ink-dim);
+  transition: color 0.15s;
+}
+.karaoke-word.active { color: var(--cyan); }
+.karaoke-word.done { color: var(--ink); }

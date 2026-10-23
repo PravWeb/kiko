@@ -1,0 +1,21 @@
+import { chromium } from "playwright";
+const browser = await chromium.launch({ headless: true });
+const page = await browser.newPage({ viewport: { width: 1440, height: 960 } });
+const errs = [];
+page.on("pageerror", (e) => errs.push(String(e).slice(0,200)));
+await page.goto("http://127.0.0.1:8177/", { waitUntil: "domcontentloaded" });
+await page.waitForTimeout(4000);
+await page.locator(".composer-input").click();
+await page.keyboard.type("set a timer for 2 minutes called demo", { delay: 8 });
+await page.waitForTimeout(500);
+const val = await page.locator(".composer-input").inputValue();
+console.log("VALUE:", val);
+const disabled = await page.locator(".send-btn").isDisabled();
+console.log("send disabled:", disabled);
+await page.screenshot({ path: "/tmp/opencode/kiko-e2e/probe2.png" })
+await page.locator(".send-btn").click();
+await page.waitForTimeout(16000);
+const log = await page.locator(".stream").innerText().catch(()=>"");
+console.log("log:", log.replace(/\s+/g," ").slice(0,180));
+console.log("pageerrors:", errs.length, errs.slice(0,3));
+await browser.close();

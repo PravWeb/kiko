@@ -1,0 +1,10 @@
+import { chromium } from "playwright";
+const browser = await chromium.launch({ headless: true });
+const page = await browser.newPage();
+const reqs = {};
+page.on("request", (r) => { const k = r.url().split("?")[0]; const t = r.resourceType(); const key = t + " " + (k.startsWith("blob") ? "blob" : k.replace("http://127.0.0.1:8177","")); reqs[key] = (reqs[key]||0)+1; });
+page.on("requestfailed", (r) => { const key = "FAILED " + r.resourceType() + " " + (r.url().startsWith("blob") ? "blob" : r.url().slice(0,80)); reqs[key] = (reqs[key]||0)+1; });
+await page.goto("http://127.0.0.1:8177/", { waitUntil: "domcontentloaded" });
+await page.waitForTimeout(15000);
+for (const [k,v] of Object.entries(reqs)) console.log(v, k.slice(0,110));
+await browser.close();
