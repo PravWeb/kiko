@@ -3,18 +3,24 @@
 .main {
   flex: 1;
   min-height: 0;
+  height: 100%;
   display: flex;
   min-width: 0;
+  overflow: hidden;
 }
 .main .panel {
   flex: 1;
+  min-height: 0;
+  height: 100%;
+  max-height: 100%;
   min-width: 0;
   max-width: 1100px;
   margin: 0 auto;
   width: 100%;
+  overflow: hidden;
 }
 @media (max-width: 900px) {
-  .main { min-height: 480px; }
+  .main { min-height: 0; }
 }
 
 /* now-speaking karaoke strip (above composer) */

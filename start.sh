@@ -43,12 +43,19 @@ if [ ! -f "$GGUF_BIG" ] && [ ! -f "$GGUF_SMALL" ]; then
   esac
 fi
 
-if [ ! -d frontend/out ]; then
+NEEDS_BUILD=0
+if [ ! -d frontend/out ] || [ ! -f frontend/out/index.html ]; then
+  NEEDS_BUILD=1
+elif [ -n "$(find frontend/app frontend/components frontend/hooks frontend/lib -type f -newer frontend/out/index.html 2>/dev/null)" ]; then
+  NEEDS_BUILD=1
+fi
+
+if [ "$NEEDS_BUILD" -eq 1 ]; then
   if command -v npm >/dev/null 2>&1; then
     echo "[setup] building frontend..."
     (cd frontend && npm install && npm run build)
   else
-    echo "[error] frontend/out missing and npm not found" >&2
+    echo "[error] frontend needs build and npm not found" >&2
     exit 1
   fi
 fi

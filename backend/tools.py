@@ -138,17 +138,68 @@ def fire_due_timers() -> list[dict]:
     return fired
 
 
-# ------------------------------------------------------------------- memory
+# ------------------------------------------------------------------- persistent memory
+from pathlib import Path
+import json
+
+_DATA_DIR = Path(__file__).parent / "data"
+_DATA_DIR.mkdir(parents=True, exist_ok=True)
+_MEMORY_FILE = _DATA_DIR / "memory.json"
+
 _session_memory: dict[str, str] = {}
 _mem_lock = threading.Lock()
 
 
+def _load_memory() -> None:
+    global _session_memory
+    if _MEMORY_FILE.exists():
+        try:
+            with open(_MEMORY_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    _session_memory = {str(k).strip().lower(): str(v) for k, v in data.items()}
+        except Exception:
+            _session_memory = {}
+
+
+def _save_memory() -> None:
+    try:
+        tmp = _MEMORY_FILE.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_session_memory, f, ensure_ascii=False, indent=2)
+        tmp.replace(_MEMORY_FILE)
+    except Exception:
+        pass
+
+
+_load_memory()
+
+
 def remember(key: str, value: str) -> dict:
     key = str(key).strip().lower()[:40]
-    value = str(value)[:200]
+    value = str(value).strip()[:300]
+    if not key or not value:
+        return {"error": "need both key and value"}
     with _mem_lock:
         _session_memory[key] = value
+        _save_memory()
     return {"stored": True, "key": key, "value": value}
+
+
+def forget(key: str) -> dict:
+    key = str(key).strip().lower()[:40]
+    with _mem_lock:
+        existed = _session_memory.pop(key, None) is not None
+        if existed:
+            _save_memory()
+    return {"removed": existed, "key": key}
+
+
+def clear_memory() -> dict:
+    with _mem_lock:
+        _session_memory.clear()
+        _save_memory()
+    return {"cleared": True}
 
 
 def memory_dump() -> dict[str, str]:
@@ -161,7 +212,11 @@ def memory_prompt_block() -> str:
     if not mem:
         return ""
     lines = [f"- {k}: {v}" for k, v in mem.items()]
-    return "Facts you remembered this session:\n" + "\n".join(lines)
+    return "\nLong-Term Facts you know about this user:\n" + "\n".join(lines) + "\n"
+
+
+_SEARCH_CACHE: dict[str, tuple[float, list[dict]]] = {}
+_SEARCH_CACHE_TTL = 600.0  # 10 minutes
 
 
 def web_search(args: dict) -> dict:
@@ -170,24 +225,69 @@ def web_search(args: dict) -> dict:
     query = str(args.get("query") or args.get("value") or "").strip()
     if not query:
         return {"error": "empty query"}
+
+    # Cache check
+    now = time.time()
+    q_key = query.lower()
+    if q_key in _SEARCH_CACHE:
+        cached_time, cached_results = _SEARCH_CACHE[q_key]
+        if now - cached_time < _SEARCH_CACHE_TTL:
+            return {"query": query, "results": cached_results, "cached": True}
+
+    results: list[dict] = []
+    # Primary: ddgs package
     try:
         from ddgs import DDGS
         with DDGS() as ddgs:
             rows = list(ddgs.text(query, max_results=5))
-        results = [
-            {
-                "title": r.get("title", ""),
-                "url": r.get("href", ""),
-                "snippet": (r.get("body") or "")[:300],
-            }
-            for r in rows
-        ]
-        return {"query": query, "results": results}
+        for r in rows:
+            t = (r.get("title") or "").strip()
+            u = (r.get("href") or "").strip()
+            s = (r.get("body") or "").strip()
+            if t and (s or u):
+                results.append({
+                    "title": t,
+                    "url": u,
+                    "snippet": s[:350],
+                })
     except Exception as e:
-        return {
-            "error": f"search failed: {e}",
-            "hint": "web_search needs internet; Kiko works fully offline without it",
-        }
+        log.warning("ddgs search failed: %s, attempting direct request fallback", e)
+
+    # Fallback: duckduckgo html endpoint via urllib if ddgs produced no results
+    if not results:
+        try:
+            import urllib.parse
+            import urllib.request
+            import re
+            url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                html = resp.read().decode("utf-8", errors="replace")
+            # Parse links and snippets
+            links = re.findall(r'<a class="result__url"[^>]*href="([^"]+)"', html)
+            snippets = re.findall(r'<a class="result__snippet[^>]*>(.*?)</a>', html)
+            titles = re.findall(r'<a class="result__a[^>]*>(.*?)</a>', html)
+            for i in range(min(4, len(titles))):
+                title = re.sub(r"<[^>]+>", "", titles[i]).strip()
+                snip = re.sub(r"<[^>]+>", "", snippets[i]).strip() if i < len(snippets) else ""
+                href = links[i] if i < len(links) else ""
+                if title:
+                    results.append({"title": title, "url": href, "snippet": snip[:350]})
+        except Exception as e:
+            log.warning("direct search fallback also failed: %s", e)
+
+    if results:
+        _SEARCH_CACHE[q_key] = (now, results)
+        return {"query": query, "results": results}
+
+    return {
+        "error": "No web results found or offline",
+        "hint": "web_search needs internet; Kiko works fully offline without it",
+        "results": [],
+    }
 
 
 # ---------------------------------------------------------------- tool defs
@@ -245,15 +345,15 @@ TOOLS: list[dict] = [
         "example": '{"tool": "recall", "args": {}}',
     },
     {
-        "name": "list_tools",
-        "description": "List what Kiko can do (features). Args: none",
-        "example": '{"tool": "list_tools", "args": {}}',
+        "name": "forget",
+        "description": "Delete a remembered fact about the user. Args: key",
+        "example": '{"tool": "forget", "args": {"key": "name"}}',
     },
 ]
 
 FEATURE_LIST = (
     "chat with memory, hands-free talk loop, timers, unit conversion, jokes, "
-    "motivational quotes, dice and coin flip, translate English<->Hindi, "
+    "motivational quotes, dice and coin flip, "
     "summarize long text, pronunciation scoring, read-aloud with karaoke subtitles, "
     "English and Hindi voices, voice effects (pitch/robot/echo), session export, "
     "live web search (DuckDuckGo, needs internet)"
@@ -297,6 +397,8 @@ def execute(name: str, args: dict) -> dict:
         return remember(str(args.get("key", "")), str(args.get("value", "")))
     if name == "recall":
         return memory_dump() or {"memory": "empty"}
+    if name == "forget":
+        return forget(str(args.get("key", args.get("value", ""))))
     if name == "list_tools":
         return {"features": FEATURE_LIST}
     if name == "web_search":

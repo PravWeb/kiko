@@ -24,21 +24,26 @@ class TTSRequest(BaseModel):
     lang: str | None = None
     speed: float = Field(default=1.0, ge=0.5, le=2.0)
     effect: str = "none"
+    format: str = "mp3"
 
 
 @router.get("/api/status")
 def status():
     mem = manager.status()
     import llm as _llm
+    fast_ready = manager.is_ready("llm_fast")
+    smart_ready = manager.is_ready("llm_smart")
     return {
         "app": "Kiko",
         "tts": {"ready": manager.is_ready("tts"),
                 "model": "Kokoro-82M fp16 (ONNX)"},
         "stt": {"ready": manager.is_ready("stt"),
                 "model": f"faster-whisper {stt.WHISPER_MODEL} (int8, CPU)"},
-        "llm": {"ready": manager.is_ready("llm"),
+        "llm": {"ready": fast_ready or smart_ready,
                 "available": _llm.is_available(),
-                "model": f"{_llm.GGUF_PATH.name} (llama.cpp)"},
+                "fast_ready": fast_ready,
+                "smart_ready": smart_ready,
+                "model": "Dual-Brain: 0.6B Fast (Voice) + 1.7B Smart (Docs)"},
         "memory": mem,
         "timers": tools.list_timers(),
     }
@@ -71,19 +76,22 @@ def synthesize(req: TTSRequest):
         voice, vfx = (req.voice.split("@", 1) + [""])[:2]
         vfx = {"warm": "pitch_down", "bright": "pitch_up"}.get(vfx, "none")
         effect = req.effect if req.effect and req.effect != "none" else vfx
+        fmt = (req.format or "mp3").lower()
         with manager.protect("tts"):
-            wav = tts.generate(req.text, voice=voice, lang=req.lang,
-                               speed=req.speed)
+            audio_bytes, duration = tts.generate(
+                req.text, voice=voice, lang=req.lang, speed=req.speed, fmt=fmt
+            )
         if effect and effect != "none":
             if effect not in fx.EFFECTS:
                 raise HTTPException(422, f"unknown effect {effect!r}")
-            wav = fx.apply_effect(wav, effect)
+            audio_bytes = fx.apply_effect(audio_bytes, effect, fmt=fmt)
     except ValueError as e:
         raise HTTPException(422, str(e))
+    media_type = "audio/mpeg" if fmt in ("mp3", "mpeg") else "audio/wav"
     return Response(
-        wav,
-        media_type="audio/wav",
-        headers={"X-Audio-Duration": str(tts.audio_stats(wav)["duration"])},
+        audio_bytes,
+        media_type=media_type,
+        headers={"X-Audio-Duration": str(duration)},
     )
 
 

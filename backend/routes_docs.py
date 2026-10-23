@@ -19,10 +19,14 @@ MAX_BYTES = 20 * 1024 * 1024
 class AskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
     doc_id: str | None = None
+    history: list[dict] = Field(default_factory=list)
+    brain: str = "smart"
+    websearch_enabled: bool = False
 
 
 class SummarizeRequest(BaseModel):
     doc_id: str
+    brain: str = "smart"
 
 
 @router.post("/api/docs/upload")
@@ -62,11 +66,11 @@ def _context_block(chunks: list[str]) -> str:
 def ask(req: AskRequest):
     if not docslib.has_docs():
         raise HTTPException(409, "no documents uploaded yet")
-    chunks = docslib.retrieve(req.question, k=4, doc_id=req.doc_id)
+    chunks = docslib.retrieve(req.question, k=4, doc_id=req.doc_id, history=req.history)
     if not chunks:
-        return {"reply": "I couldn't find that in the documents.",
-                "emotion": "neutral", "sources": 0, "elapsed_s": 0}
-    out = agent.chat_with_context(req.question, chunks)
+        chunks = docslib.get_fallback_chunks(req.doc_id, k=4)
+    out = agent.chat_with_context(req.question, chunks, history=req.history,
+                                 brain=req.brain, websearch_enabled=req.websearch_enabled)
     return {**out, "sources": len(chunks)}
 
 
@@ -75,13 +79,16 @@ def ask_stream(req: AskRequest):
     """Token-streamed grounded answer (SSE)."""
     if not docslib.has_docs():
         raise HTTPException(409, "no documents uploaded yet")
-    chunks = docslib.retrieve(req.question, k=4, doc_id=req.doc_id)
+    chunks = docslib.retrieve(req.question, k=4, doc_id=req.doc_id, history=req.history)
     if not chunks:
-        raise HTTPException(404, "nothing relevant found in the documents")
+        chunks = docslib.get_fallback_chunks(req.doc_id, k=4)
 
     def sse():
         try:
-            for ev in agent.chat_with_context_stream(req.question, chunks):
+            for ev in agent.chat_with_context_stream(
+                req.question, chunks, history=req.history,
+                brain=req.brain, websearch_enabled=req.websearch_enabled
+            ):
                 yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
         except Exception as e:
             log.exception("docs stream failed")
@@ -96,6 +103,27 @@ def summarize(req: SummarizeRequest):
         raise HTTPException(409, "no documents uploaded yet")
     text = docslib.summarize_source(req.doc_id)
     out = agent.chat_with_context(
-        "Summarize this document in 3 short spoken lines, plain English.",
-        [text])
+        "Summarize this document clearly: main takeaways, purpose, and key points.",
+        [text], history=[], brain=req.brain)
     return {**out, "sources": 1}
+
+
+@router.post("/api/docs/summarize/stream")
+def summarize_stream(req: SummarizeRequest):
+    """Token-streamed document summary (SSE)."""
+    if not docslib.has_docs():
+        raise HTTPException(409, "no documents uploaded yet")
+    text = docslib.summarize_source(req.doc_id)
+
+    def sse():
+        try:
+            prompt = "Summarize this document thoroughly with clear bullet points, purpose, and key takeaways."
+            for ev in agent.chat_with_context_stream(
+                prompt, [text], history=[], brain=req.brain
+            ):
+                yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            log.exception("docs summarize stream failed")
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(sse(), media_type="text/event-stream")

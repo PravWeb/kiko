@@ -115,6 +115,7 @@ export async function speakRequest(opts: {
   lang?: string | null;
   speed: number;
   effect?: Effect;
+  format?: string;
 }): Promise<{ blob: Blob; duration: number }> {
   const res = await fetch(`${API}/api/tts`, {
     method: "POST",
@@ -125,6 +126,7 @@ export async function speakRequest(opts: {
       lang: opts.lang ?? null,
       speed: opts.speed,
       effect: opts.effect ?? "none",
+      format: opts.format ?? "mp3",
     }),
   });
   if (!res.ok) {
@@ -137,6 +139,49 @@ export async function speakRequest(opts: {
   }
   const duration = Number(res.headers.get("X-Audio-Duration") || 0);
   return { blob: await res.blob(), duration };
+}
+
+export async function parseFile(file: File): Promise<{
+  name: string;
+  text: string;
+  words: number;
+}> {
+  const form = new FormData();
+  form.append("file", file, file.name);
+  const res = await fetch(`${API}/api/parse-file`, { method: "POST", body: form });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      detail = (await res.json()).detail ?? detail;
+    } catch {}
+    throw new Error(detail);
+  }
+  return res.json();
+}
+
+export async function getMemory(): Promise<{ memory: Record<string, string> }> {
+  return json(await fetch(`${API}/api/memory`));
+}
+
+export async function setMemory(
+  key: string,
+  value: string
+): Promise<{ ok: boolean; memory: Record<string, string> }> {
+  return post("/api/memory", { key, value });
+}
+
+export async function deleteMemory(
+  key: string
+): Promise<{ ok: boolean; memory: Record<string, string> }> {
+  const res = await fetch(`${API}/api/memory/${encodeURIComponent(key)}`, {
+    method: "DELETE",
+  });
+  return json(res);
+}
+
+export async function clearMemory(): Promise<{ ok: boolean; memory: Record<string, string> }> {
+  const res = await fetch(`${API}/api/memory`, { method: "DELETE" });
+  return json(res);
 }
 
 export async function transcribeRequest(
@@ -218,7 +263,9 @@ export function chatStream(
     message: string;
     history: { who: "user" | "kiko"; text: string }[];
     tools_enabled: boolean;
+    websearch_enabled?: boolean;
     lang?: "en" | "hi";
+    brain?: "fast" | "smart";
   },
   onDelta: (t: string) => void
 ): Promise<ChatStreamFinal> {
@@ -228,16 +275,35 @@ export function chatStream(
 export function docsAskStream(
   q: string,
   docId: string | null,
-  onDelta: (t: string) => void
+  history: { who: "user" | "kiko"; text: string }[] = [],
+  onDelta: (t: string) => void,
+  brain: "smart" | "fast" = "smart",
+  websearch_enabled: boolean = false
 ): Promise<ChatStreamFinal> {
-  return sseStream("/api/docs/ask/stream", { question: q, doc_id: docId }, onDelta);
+  return sseStream(
+    "/api/docs/ask/stream",
+    { question: q, doc_id: docId, history, brain, websearch_enabled },
+    onDelta
+  );
 }
 
-export async function translateRequest(
-  text: string,
-  direction: "en-hi" | "hi-en"
-): Promise<{ text: string; tokens_per_s: number }> {
-  return post("/api/translate", { text, direction });
+export function docsSummarizeStream(
+  docId: string,
+  onDelta: (t: string) => void,
+  brain: "smart" | "fast" = "smart"
+): Promise<ChatStreamFinal> {
+  return sseStream(
+    "/api/docs/summarize/stream",
+    { doc_id: docId, brain },
+    onDelta
+  );
+}
+
+export async function searchWeb(query: string): Promise<{
+  query: string;
+  results: { title: string; url: string; snippet: string }[];
+}> {
+  return post("/api/search", { query });
 }
 
 export async function summarizeRequest(

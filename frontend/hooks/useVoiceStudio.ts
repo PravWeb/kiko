@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { speakRequest, transcribeRequest } from "@/lib/api";
+import { parseFile, speakRequest, transcribeRequest } from "@/lib/api";
 import type { Msg } from "@/components/ControlPanel";
 import type { Effect } from "@/lib/api";
 import { useMic } from "@/hooks/useMic";
@@ -33,6 +33,11 @@ export function useVoiceStudio({
       const body = (raw ?? text).trim();
       if (!body || busy) return;
       setBusy(true);
+      const msgId = ++idRef.current;
+      setMsgs((m) => [
+        ...m,
+        { id: msgId, role: "ai", text: body, audioLoading: true },
+      ]);
       try {
         const { blob, duration } = await speakRequest({
           text: body,
@@ -41,12 +46,14 @@ export function useVoiceStudio({
           effect,
         });
         const url = URL.createObjectURL(blob);
-        setMsgs((m) => [
-          ...m,
-          { id: ++idRef.current, role: "ai", text: body, url, dur: duration },
-        ]);
+        setMsgs((m) =>
+          m.map((x) =>
+            x.id === msgId ? { ...x, url, dur: duration, audioLoading: false } : x
+          )
+        );
         await playBlob(blob, url, duration, body, true);
       } catch (e) {
+        setMsgs((m) => m.filter((x) => x.id !== msgId));
         toast(e instanceof Error ? e.message : "Voice generation failed");
       } finally {
         setBusy(false);
@@ -75,6 +82,22 @@ export function useVoiceStudio({
     }
   }, [mic, generate, toast]);
 
+  const uploadScript = useCallback(
+    async (file: File) => {
+      try {
+        toast(`🎙 Parsing script ${file.name}...`);
+        const res = await parseFile(file);
+        if (res.text) {
+          setText(res.text.slice(0, 2000));
+          toast(`✓ Loaded ${res.name} (${res.words} words)`);
+        }
+      } catch (e) {
+        toast(e instanceof Error ? e.message : "Failed to load script");
+      }
+    },
+    [toast]
+  );
+
   return {
     text,
     setText,
@@ -92,6 +115,7 @@ export function useVoiceStudio({
     level: mic.level,
     transcript: mic.transcript,
     onMicToggle,
+    uploadScript,
   };
 }
 

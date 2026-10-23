@@ -82,10 +82,15 @@ export function useSpeechPlayer() {
         setActiveWord(-1);
         setBusy(true);
         setCharState("thinking");
+        let finished = false;
         const cleanup = () => {
+          if (finished) return;
+          finished = true;
           a.removeEventListener("ended", onEnded);
           a.removeEventListener("error", onError);
           if (safety) window.clearTimeout(safety);
+          setBusy(false);
+          setCharState("idle");
           resolve();
         };
         const onEnded = () => {
@@ -95,16 +100,15 @@ export function useSpeechPlayer() {
           cleanup();
         };
         // hard fallback: never let a stuck element hang the turn
-        const safety =
-          typeof dur === "number" && dur > 0
-            ? window.setTimeout(() => a.pause(), dur * 1000 + 3500)
-            : null;
+        const timeoutMs = Math.max(2500, ((dur ?? 3) * 1000) + 1500);
+        const safety = window.setTimeout(() => {
+          try { a.pause(); } catch {}
+          cleanup();
+        }, timeoutMs);
         a.addEventListener("ended", onEnded);
         a.addEventListener("error", onError);
         a.src = src;
         a.play().catch(() => {
-          setBusy(false);
-          setCharState("idle");
           cleanup();
         });
       });

@@ -59,6 +59,7 @@ class Engine:
     loads: int = 0
     unloads: int = 0
     load_time: float | None = None
+    in_use: int = 0
 
 
 class ModelManager:
@@ -104,12 +105,19 @@ class ModelManager:
 
     @contextmanager
     def protect(self, name: str):
-        """Hold an engine while in use so the sweeper won't unload it."""
+        """Hold an engine while in use so the sweeper won't unload it.
+        Uses reference counting rather than holding a thread lock across yields."""
         eng = self._engines[name]
         with eng._lock:
+            eng.in_use += 1
             eng.last_used = time.time()
-            yield eng.handle
-            eng.last_used = time.time()
+            handle = eng.handle
+        try:
+            yield handle
+        finally:
+            with eng._lock:
+                eng.in_use = max(0, eng.in_use - 1)
+                eng.last_used = time.time()
 
     def peek(self, name: str) -> Any | None:
         eng = self._engines.get(name)
@@ -127,6 +135,9 @@ class ModelManager:
             if eng.handle is None:
                 return False
             if eng.resident or eng.keep_loaded:
+                return False
+            if eng.in_use > 0:
+                log.info("cannot unload %s: engine in use (%d active)", name, eng.in_use)
                 return False
             try:
                 eng.unloader(eng.handle)
@@ -162,9 +173,7 @@ class ModelManager:
             if eng.resident or eng.keep_loaded:
                 continue
             with eng._lock:
-                if eng.handle is None:
-                    continue
-                if eng.loading:
+                if eng.handle is None or eng.loading or eng.in_use > 0:
                     continue
                 # last_used is refreshed by protect() while generating
                 if now - eng.last_used > eng.idle_ttl:

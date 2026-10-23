@@ -19,10 +19,11 @@ log = logging.getLogger("agent")
 TOOL_HINT = tools.describe_for_llm()
 SYSTEM = (
     f"{KIKO_PERSONA}\n\n{TOOL_HINT}\n\n"
-    "When a tool helps, reply with ONLY a JSON object like "
+    "Only call a tool if the user's prompt directly requires one of the local companion tools listed above. "
+    "Never call a tool for general technical questions or external software commands (like docker, git, linux, programming). "
+    "When a local tool is truly needed, reply with ONLY a JSON object like "
     '{"tool": "set_timer", "args": {"seconds": 30, "label": "tea"}}.\n'
-    "After you receive the tool result, answer the user in one short spoken "
-    "line. Otherwise reply normally. You may prefix a reply with one emotion "
+    "Otherwise reply directly and helpfully. You may prefix a reply with one emotion "
     "tag from: [emotion:happy] [emotion:excited] [emotion:neutral] "
     "[emotion:serious] [emotion:surprised] [emotion:shy] [emotion:sleepy] "
     "[emotion:thinking].\n{memory}"
@@ -78,7 +79,10 @@ def _strip_emotion(text: str, default: str = "neutral") -> tuple[str, str]:
     if m:
         emo = m.group(1).lower()
         text = _emotion_re.sub(" ", text).strip()
+        # also drop an unclosed trailing tag (streamed/stopped mid-tag)
+        text = re.sub(r"\s*\[emotion:?\s*[a-z]*$", "", text, flags=re.I).strip()
         return text, (emo if emo in VALID_EMOTIONS else default)
+    text = re.sub(r"\s*\[emotion:?\s*[a-z]*\]?\s*$", "", text, flags=re.I).strip()
     low = text.lower()
     if any(w in low for w in ("wow", "amazing", "haha", "awesome")):
         return text, "excited"
@@ -151,6 +155,33 @@ def _extract_tool(text: str) -> tuple[str, dict] | None:
         start = cleaned.find("{", start + 1)
     return None
 
+
+_TOOL_KEYWORDS = {
+    "set_timer": ("timer", "alarm", "remind", "minute", "second", "hour", "समय", "टाइमर"),
+    "unit_convert": ("convert", "kg", "lbs", "mile", "km", "celsius", "fahrenheit", "meter", "feet", "inch"),
+    "tell_joke": ("joke", "funny", "laugh", "चुटकुला", "मजाक"),
+    "motivate": ("motivat", "quote", "inspire", "प्रेरणा"),
+    "dice": ("dice", "roll", "d6", "d20", "die", "पासा"),
+    "coin_flip": ("coin", "flip", "toss", "heads", "tails", "सिक्का"),
+    "get_time_date": ("time", "date", "clock", "today", "weekday", "day", "वक्त", "तारीख", "दिन"),
+    "remember": ("remember", "my name is", "save this", "याद रखो", "note that"),
+    "recall": ("recall", "what is my", "what did i say", "who am i", "याद है", "do you know my"),
+    "forget": ("forget", "delete memory", "erase memory", "भूल जाओ", "हटाओ"),
+    "web_search": (
+        "search", "browse", "lookup", "google", "find online", "who is", "what is",
+        "latest", "recent", "news", "current", "weather", "score", "price", "release",
+        "update", "internet", "web", "who won", "खोजो", "पता करो", "समाचार"
+    ),
+}
+
+
+def _is_tool_relevant(tool_name: str, message: str) -> bool:
+    keywords = _TOOL_KEYWORDS.get(tool_name)
+    if not keywords:
+        return False
+    msg_low = message.lower()
+    return any(kw in msg_low for kw in keywords)
+
 def _lang_rule(lang: str) -> str:
     if lang == "hi":
         return (
@@ -175,20 +206,42 @@ def _context_block(chunks: list[str]) -> str:
     )
 
 
-def chat_with_context(question: str, chunks: list[str]) -> dict:
-    """Grounded answer: no tools, file content in system, one short reply."""
+def chat_with_context(question: str, chunks: list[str],
+                      history: list[dict] | None = None,
+                      brain: str = "smart",
+                      websearch_enabled: bool = False) -> dict:
+    """Grounded answer with multi-turn conversation support and smart brain."""
     started = time.time()
+    tool_calls: list[dict] = []
+    all_chunks = list(chunks)
+    if websearch_enabled:
+        search_res = tools.web_search({"query": question})
+        tool_calls.append({"tool": "web_search", "args": {"query": question}, "result": search_res})
+        res_list = search_res.get("results", [])
+        if res_list:
+            all_chunks.extend(
+                f"[Web: {r.get('title')}] {r.get('snippet')} (URL: {r.get('url')})"
+                for r in res_list[:3]
+            )
+
     sys_prompt = (
-        "You are Kiko — a cheerful offline assistant. Answer ONLY from the "
-        "given FILE CONTENT. If it is missing there, say so. Reply in one or "
-        "two short spoken lines. /no_think"
+        "You are Kiko — a cheerful and intelligent assistant. Answer using the "
+        "given FILE CONTENT and any accompanying WEB CONTEXT. Provide a clear, "
+        "thorough, well-structured answer. Cite relevant details or source URLs."
+        + _CHAT_TEXT_STYLE
     )
     messages = [
-        {"role": "system", "content": sys_prompt + _context_block(chunks)},
-        {"role": "user", "content": question[:1500]},
+        {"role": "system", "content": sys_prompt + _context_block(all_chunks)},
     ]
-    raw = complete(messages, max_tokens=200, temperature=0.6,
-                   repeat_penalty=1.12)
+    for h in (history or [])[-6:]:
+        role = "assistant" if h.get("who") == "kiko" else "user"
+        content = str(h.get("text", "")).strip()[:500]
+        if content:
+            messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": question[:1500]})
+
+    raw = complete(messages, max_tokens=650, temperature=0.6,
+                   repeat_penalty=1.12, keep_code=True, brain=brain)
     reply, emotion = _strip_emotion(raw)
     reply = reply.strip().strip('"').strip()
     for label in ("किको:", "Kiko:"):
@@ -197,30 +250,54 @@ def chat_with_context(question: str, chunks: list[str]) -> dict:
     return {
         "reply": reply or "…",
         "emotion": emotion,
-        "tool_calls": [],
+        "tool_calls": tool_calls,
         "elapsed_s": round(time.time() - started, 2),
     }
 
 
-def chat_with_context_stream(question: str, chunks: list[str]):
+def chat_with_context_stream(question: str, chunks: list[str],
+                             history: list[dict] | None = None,
+                             brain: str = "smart",
+                             websearch_enabled: bool = False):
     """Streaming variant of chat_with_context — yields SSE events:
     {"type":"delta","t":…} then {"type":"final", reply, emotion, elapsed_s}."""
     started = time.time()
+    tool_calls: list[dict] = []
+    all_chunks = list(chunks)
+    if websearch_enabled:
+        search_res = tools.web_search({"query": question})
+        tool_calls.append({"tool": "web_search", "args": {"query": question}, "result": search_res})
+        res_list = search_res.get("results", [])
+        if res_list:
+            all_chunks.extend(
+                f"[Web: {r.get('title')}] {r.get('snippet')} (URL: {r.get('url')})"
+                for r in res_list[:3]
+            )
+
     sys_prompt = (
-        "You are Kiko — a cheerful offline assistant. Answer ONLY from the "
-        "given FILE CONTENT. If it is missing there, say so. Reply in one or "
-        "two short spoken lines. /no_think"
+        "You are Kiko — a cheerful and intelligent assistant. Answer using the "
+        "given FILE CONTENT and any accompanying WEB CONTEXT. Provide a clear, "
+        "well-structured answer. Cite relevant points or URLs."
+        + _CHAT_TEXT_STYLE
     )
     messages = [
-        {"role": "system", "content": sys_prompt + _context_block(chunks)},
-        {"role": "user", "content": question[:1500]},
+        {"role": "system", "content": sys_prompt + _context_block(all_chunks)},
     ]
+    for h in (history or [])[-6:]:
+        role = "assistant" if h.get("who") == "kiko" else "user"
+        content = str(h.get("text", "")).strip()[:500]
+        if content:
+            messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": question[:1500]})
 
     def gen():
+        if tool_calls:
+            yield {"type": "tools", "tool_calls": tool_calls}
         raw_parts: list[str] = []
         try:
-            for delta in llm_stream(messages, max_tokens=320,
-                                    temperature=0.6, repeat_penalty=1.12):
+            for delta in llm_stream(messages, max_tokens=650,
+                                    temperature=0.6, repeat_penalty=1.12,
+                                    brain=brain):
                 if delta:
                     raw_parts.append(delta)
                     yield {"type": "delta", "t": delta}
@@ -238,17 +315,29 @@ def chat_with_context_stream(question: str, chunks: list[str]):
             "type": "final",
             "reply": reply or "…",
             "emotion": emotion,
-            "tool_calls": [],
+            "tool_calls": tool_calls,
             "elapsed_s": round(time.time() - started, 2),
         }
 
     return gen()
 
 
+_CHAT_TEXT_STYLE = (
+    "\n\nUI FORMATTING RULES:\n"
+    "Format your responses cleanly for the chat interface:\n"
+    "- If the user asks for commands, steps, or a list, use clean bullet points (e.g. `- \`command\`: explanation`).\n"
+    "- Put code, command line syntax, or multi-line snippets in fenced code blocks with language tags (e.g. ```bash ... ```).\n"
+    "- Use inline backticks for keywords, commands, flags, and file names (e.g. `docker run`, `Dockerfile`).\n"
+    "- Use bold for key concepts (e.g. **Images**, **Containers**).\n"
+    "- Keep simple casual greetings brief, but for technical questions, explanations, or commands, provide a thorough, structured, and easy-to-read answer with proper line breaks.\n"
+)
+
+
 def chat(message: str, history: list[dict],
-         allow_tools: bool = True, lang: str = "en") -> dict:
+         allow_tools: bool = True, lang: str = "en",
+         brain: str = "fast", websearch_enabled: bool = False) -> dict:
     """One agent turn: optional tool call + final spoken reply."""
-    sys_prompt = SYSTEM.replace("{memory}", _memory_block()) + _lang_rule(lang)
+    sys_prompt = SYSTEM.replace("{memory}", _memory_block()) + _lang_rule(lang) + _CHAT_TEXT_STYLE
     messages = [{"role": "system", "content": sys_prompt}]
     for h in history[-8:]:
         role = "assistant" if h.get("who") == "kiko" else "user"
@@ -261,10 +350,27 @@ def chat(message: str, history: list[dict],
     started = time.time()
     raw = ""
 
+    if websearch_enabled:
+        search_res = tools.web_search({"query": message})
+        tool_calls.append({"tool": "web_search", "args": {"query": message}, "result": search_res})
+        results = search_res.get("results", [])
+        if results:
+            snippets = [
+                f"- **{r.get('title', 'Web Result')}**: {r.get('snippet', '')} (URL: {r.get('url', '')})"
+                for r in results[:4]
+            ]
+            messages.append({
+                "role": "system",
+                "content": f"LIVE WEB SEARCH RESULTS for '{message}':\n" + "\n".join(snippets) +
+                           "\n\nAnswer the user based on these search results. Cite titles or URLs where helpful."
+            })
+
     for round_i in range(2):
-        raw = complete(messages, max_tokens=260, temperature=0.7,
-                       repeat_penalty=1.15)
-        tool = _extract_tool(raw) if (allow_tools and round_i == 0) else None
+        raw = complete(messages, max_tokens=450, temperature=0.7,
+                       repeat_penalty=1.15, keep_code=True, brain=brain)
+        tool = _extract_tool(raw) if (allow_tools and round_i == 0 and not websearch_enabled) else None
+        if tool and not _is_tool_relevant(tool[0], message):
+            tool = None
         if tool is None:
             # model sometimes re-emits a tool call in round 1 — re-prompt once
             if round_i == 1 and _extract_tool(raw) is not None:
@@ -272,11 +378,11 @@ def chat(message: str, history: list[dict],
                 messages.append({
                     "role": "user",
                     "content": "You already have the tool result above. "
-                               "Reply to the user in ONE short spoken line. "
+                               "Reply to the user cleanly. "
                                "Do NOT output JSON.",
                 })
-                raw = complete(messages, max_tokens=160, temperature=0.6,
-                               repeat_penalty=1.15)
+                raw = complete(messages, max_tokens=250, temperature=0.6,
+                               repeat_penalty=1.15, keep_code=True, brain=brain)
                 if _extract_tool(raw) is not None:
                     raw = "Done!"
             return _finish(messages, raw, tool_calls, started, lang)
@@ -287,32 +393,17 @@ def chat(message: str, history: list[dict],
         messages.append({
             "role": "user",
             "content": f"tool result: {json.dumps(result, ensure_ascii=False)}\n"
-                       "Now reply to the user in one short spoken line. "
+                       "Now reply to the user. "
                        "Do NOT output JSON.",
         })
 
     return _finish(messages, raw, tool_calls, started, lang)
 
 
-_CHAT_TEXT_STYLE = (
-    " STYLE for this text channel: keep casual replies short (under 60 "
-    "words), but if the user asks for code, an example, or a deep "
-    "explanation, give a proper answer: short paragraphs and ALL code inside "
-    "``` fenced blocks with a language tag (like ```python). Only invent "
-    "APIs you are sure exist; prefer classic well-known libraries."
-)
-
-
 def chat_stream(message: str, history: list[dict],
-                allow_tools: bool = True, lang: str = "en"):
-    """Streaming variant for the text-chat UI.
-
-    Returns a generator of events:
-      {"type": "delta", "t": "..."}     — incremental answer text
-      {"type": "tools", "tool_calls": …} — a tool round is executing
-      {"type": "final", reply, emotion, tool_calls, elapsed_s}
-      {"type": "error", "message": …}
-    """
+                allow_tools: bool = True, lang: str = "en",
+                brain: str = "fast", websearch_enabled: bool = False):
+    """Streaming variant for the text-chat UI with masked tool calls."""
     sys_prompt = (SYSTEM.replace("{memory}", _memory_block())
                   + _lang_rule(lang) + _CHAT_TEXT_STYLE)
     messages = [{"role": "system", "content": sys_prompt}]
@@ -326,20 +417,66 @@ def chat_stream(message: str, history: list[dict],
     started = time.time()
     tool_calls: list[dict] = []
 
+    if websearch_enabled:
+        search_res = tools.web_search({"query": message})
+        tool_calls.append({"tool": "web_search", "args": {"query": message}, "result": search_res})
+        results = search_res.get("results", [])
+        if results:
+            snippets = [
+                f"- **{r.get('title', 'Web Result')}**: {r.get('snippet', '')} (URL: {r.get('url', '')})"
+                for r in results[:4]
+            ]
+            messages.append({
+                "role": "system",
+                "content": f"LIVE WEB SEARCH RESULTS for '{message}':\n" + "\n".join(snippets) +
+                           "\n\nAnswer the user based on these search results. Cite titles or URLs where helpful."
+            })
+
     def gen():
+        if tool_calls:
+            yield {"type": "tools", "tool_calls": tool_calls}
+
         raw_parts: list[str] = []
+        buffered_deltas: list[str] = []
+        is_tool: bool | None = None
+
         try:
-            for delta in llm_stream(messages, max_tokens=512,
-                                    temperature=0.7, repeat_penalty=1.12):
-                if delta:
-                    raw_parts.append(delta)
+            for delta in llm_stream(messages, max_tokens=800,
+                                    temperature=0.7, repeat_penalty=1.12,
+                                    brain=brain):
+                if not delta:
+                    continue
+                raw_parts.append(delta)
+
+                if allow_tools and not websearch_enabled and is_tool is None:
+                    buffered_deltas.append(delta)
+                    buf_str = "".join(buffered_deltas).strip()
+                    if buf_str.startswith(("{", "```json", "```")):
+                        if "}" in buf_str and _extract_tool(buf_str) is not None:
+                            is_tool = True
+                        elif len(buf_str) > 240:
+                            is_tool = False
+                            for d in buffered_deltas:
+                                yield {"type": "delta", "t": d}
+                            buffered_deltas.clear()
+                        continue
+                    elif len(buf_str) > 10 or not any(buf_str.startswith(x) for x in ("{", "```", "[emotion")):
+                        is_tool = False
+                        for d in buffered_deltas:
+                            yield {"type": "delta", "t": d}
+                        buffered_deltas.clear()
+                elif is_tool is False or websearch_enabled:
                     yield {"type": "delta", "t": delta}
-        except Exception as e:  # engine hiccup mid-stream
+
+        except Exception as e:
             log.exception("chat_stream failed")
             yield {"type": "error", "message": str(e)}
             return
+
         raw = "".join(raw_parts)
-        tool = _extract_tool(raw) if allow_tools else None
+        tool = _extract_tool(raw) if (allow_tools and not websearch_enabled) else None
+        if tool and not _is_tool_relevant(tool[0], message):
+            tool = None
         if tool is not None:
             name, args = tool
             result = tools.execute(name, args)
@@ -353,12 +490,17 @@ def chat_stream(message: str, history: list[dict],
                            "Do NOT output JSON.",
             })
             raw = complete(messages, max_tokens=200, temperature=0.6,
-                           repeat_penalty=1.15)
+                           repeat_penalty=1.15, brain=brain)
             if _extract_tool(raw) is not None:
                 raw = "हो गया जी!" if lang == "hi" else "Done!"
             yield {"type": "final", **_finish(messages, raw, tool_calls,
                                               started, lang)}
             return
+
+        if buffered_deltas:
+            for d in buffered_deltas:
+                yield {"type": "delta", "t": d}
+
         yield {"type": "final", **_finish(messages, raw, tool_calls,
                                           started, lang)}
 

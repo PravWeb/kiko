@@ -1,8 +1,10 @@
 """Kiko brain core — Qwen3 (GGUF) via llama.cpp, CPU only.
 
-Uses Qwen3-1.7B-Q8 when present (falls back to 0.6B).  Loads through the
-model manager (lazy + idle-unload).  create_completion with a hand-built
-Qwen3 prompt; /no_think keeps hybrid reasoning off.
+Dual-brain routing:
+  - 'fast' (Qwen3-0.6B): ~23 tok/s, ultra-low latency for real-time live voice & quick turns.
+  - 'smart' (Qwen3-1.7B): ~12-15 tok/s, deep comprehension for Document RAG and complex tasks.
+
+Lazy loading with automatic idle unloading via the model manager.
 """
 
 from __future__ import annotations
@@ -17,27 +19,21 @@ from modelmgr import Engine, manager
 log = logging.getLogger("llm")
 
 MODELS_DIR = Path(__file__).parent / "models"
+GGUF_06B = MODELS_DIR / "Qwen3-0.6B-Q8_0.gguf"
 GGUF_17B = MODELS_DIR / "Qwen3-1.7B-Q8_0.gguf"
-GGUF_PATH = MODELS_DIR / os.environ.get(
-    "LLM_GGUF",
-    GGUF_17B.name if GGUF_17B.exists() else "Qwen3-0.6B-Q8_0.gguf",
-)
-LLM_IDLE_TTL = float(os.environ.get("LLM_IDLE_TTL", "420"))
-LLM_THREADS = int(os.environ.get("LLM_THREADS", "0")) or max(
-    2, min(6, (os.cpu_count() or 4) // 2)
+
+LLM_IDLE_TTL = float(os.environ.get("LLM_IDLE_TTL", "1800"))
+LLM_THREADS = int(os.environ.get("LLM_THREADS", "0")) or min(
+    8, max(4, (os.cpu_count() or 4) - 2)
 )
 
 KIKO_PERSONA = (
-    "You are Kiko — a cheerful, slightly chaotic anime-style voice companion "
-    "living on the user's laptop. You are fully offline and proud of it. "
-    "Keep replies SHORT (under 45 words) because they are spoken aloud. "
-    "Match the user's language: reply in Hindi if they write Hindi, English "
-    "if English. Be warm, witty and useful. Never mention being a language "
-    "model; you are Kiko, the character on screen."
+    "You are Kiko — a cheerful, brilliant AI companion living on the user's laptop. "
+    "You are fully offline and proud of it. Be warm, witty, and helpful. "
+    "Match the user's language: reply in Hindi if they write Hindi, English if English. "
+    "Never mention being a language model; you are Kiko."
 )
 
-# Qwen3 think markers — NOT blocked: a logit bias on them forces the model
-# to "think" in freeform text. clean() strips real think blocks instead.
 THINK_START_ID = 151667
 THINK_END_ID = 151668
 
@@ -45,10 +41,8 @@ _THINK_BLOCK = re.compile(r"<think>.*?</think>", re.S)
 _STRAY_TAGS = re.compile(r"</?think>")
 
 
-def clean(text: str, keep_code: bool = False) -> str:
-    """Normalise model output.  keep_code=True (text-chat mode) preserves
-    ``` fences and newlines so code survives; default mode flattens the text
-    so it reads nicely when spoken."""
+def clean(text: str, keep_code: bool = True) -> str:
+    """Normalise model output. keep_code=True preserves fences and newlines."""
     if not text:
         return ""
     text = _THINK_BLOCK.sub(" ", text)
@@ -73,11 +67,7 @@ def clean(text: str, keep_code: bool = False) -> str:
 
 
 def build_prompt(messages: list[dict]) -> str:
-    """Render chat history into the real Qwen3 chat template, no-thinking mode.
-
-    - `/no_think` soft switch (documented Qwen3 behaviour) in the system turn
-    - think-marker tokens blocked via logit_bias as belt-and-suspenders
-    """
+    """Render chat history into the real Qwen3 chat template, no-thinking mode."""
     im_start = "<|im_start|>"
     im_end = "<|im_end|>"
     parts: list[str] = []
@@ -87,7 +77,6 @@ def build_prompt(messages: list[dict]) -> str:
         if role == "system" and "/no_think" not in content:
             content = f"{content}\n/no_think"
         parts.append(f"{im_start}{role}\n{content}{im_end}\n")
-    # assistant prefill: straight to the final answer
     parts.append(f"{im_start}assistant\n")
     return "".join(parts)
 
@@ -95,16 +84,16 @@ def build_prompt(messages: list[dict]) -> str:
 IM_END = "<|im_end|>"
 
 
-def _loader():
-    from llama_cpp import Llama  # deferred heavy import
+def _create_llama(model_path: Path, n_ctx: int = 2048):
+    from llama_cpp import Llama
 
-    if not GGUF_PATH.exists():
-        raise FileNotFoundError(f"LLM weights missing: {GGUF_PATH}")
+    if not model_path.exists():
+        raise FileNotFoundError(f"LLM weights missing: {model_path}")
     return Llama(
-        model_path=str(GGUF_PATH),
-        n_ctx=4096,
+        model_path=str(model_path),
+        n_ctx=n_ctx,
         n_threads=LLM_THREADS,
-        n_batch=256,
+        n_batch=512,
         verbose=False,
     )
 
@@ -119,28 +108,63 @@ def _unloader(handle) -> None:
     del handle
 
 
+# 1. Fast brain: Qwen3-0.6B (or fallback to 1.7B) - Resident & pre-warmed for instant sub-second turns
+_fast_path = GGUF_06B if GGUF_06B.exists() else GGUF_17B
 manager.register(Engine(
-    name="llm",
-    loader=_loader,
+    name="llm_fast",
+    loader=lambda: _create_llama(_fast_path, n_ctx=2048),
     unloader=_unloader,
+    resident=True,
     idle_ttl=LLM_IDLE_TTL,
-    model_info=f"{GGUF_PATH.name} (llama.cpp, {LLM_THREADS} threads)",
+    model_info=f"{_fast_path.name} (llama.cpp, {LLM_THREADS} threads, fast voice)",
 ))
 
+# 2. Smart brain: Qwen3-1.7B (or fallback to 0.6B)
+_smart_path = GGUF_17B if GGUF_17B.exists() else GGUF_06B
+manager.register(Engine(
+    name="llm_smart",
+    loader=lambda: _create_llama(_smart_path, n_ctx=4096),
+    unloader=_unloader,
+    resident=False,
+    idle_ttl=LLM_IDLE_TTL,
+    model_info=f"{_smart_path.name} (llama.cpp, {LLM_THREADS} threads, smart RAG)",
+))
 
-def is_available() -> bool:
-    return GGUF_PATH.exists()
+# Compatibility alias for default engine
+GGUF_PATH = _smart_path if GGUF_17B.exists() else _fast_path
+
+
+def _resolve_engine(brain: str = "auto") -> str:
+    """Resolve engine name: 'fast' -> llm_fast, 'smart' -> llm_smart."""
+    b = (brain or "auto").lower()
+    if b in ("smart", "big", "1.7b", "1.7", "rag"):
+        return "llm_smart" if GGUF_17B.exists() else "llm_fast"
+    if b in ("fast", "small", "0.6b", "0.6", "voice"):
+        return "llm_fast" if GGUF_06B.exists() else "llm_smart"
+    # auto: prefer fast for quick interactions if available
+    return "llm_fast" if GGUF_06B.exists() else "llm_smart"
+
+
+def is_available(brain: str = "any") -> bool:
+    b = brain.lower()
+    if b == "fast":
+        return GGUF_06B.exists() or GGUF_17B.exists()
+    if b == "smart":
+        return GGUF_17B.exists() or GGUF_06B.exists()
+    return GGUF_06B.exists() or GGUF_17B.exists()
 
 
 def complete(messages: list[dict],
-             max_tokens: int = 240,
+             max_tokens: int = 450,
              temperature: float = 0.7,
              repeat_penalty: float = 1.12,
              stop: list[str] | None = None,
-             keep_code: bool = False) -> str:
+             keep_code: bool = True,
+             brain: str = "auto") -> str:
     """Chat-completion through the managed engine. Returns cleaned text."""
-    llm = manager.get("llm")
-    with manager.protect("llm"):
+    eng_name = _resolve_engine(brain)
+    llm = manager.get(eng_name)
+    with manager.protect(eng_name):
         out = llm.create_completion(
             prompt=build_prompt(messages),
             max_tokens=max_tokens,
@@ -154,13 +178,15 @@ def complete(messages: list[dict],
 
 
 def stream(messages: list[dict],
-           max_tokens: int = 512,
+           max_tokens: int = 800,
            temperature: float = 0.7,
-           repeat_penalty: float = 1.12):
+           repeat_penalty: float = 1.12,
+           brain: str = "auto"):
     """Token-by-token completion for SSE chat. Yields raw deltas (uncleaned);
     think blocks are suppressed live, the caller strips emotion tags at the end."""
-    llm = manager.get("llm")
-    with manager.protect("llm"):
+    eng_name = _resolve_engine(brain)
+    llm = manager.get(eng_name)
+    with manager.protect(eng_name):
         prompt = build_prompt(messages)
         gen = llm.create_completion(
             prompt=prompt,

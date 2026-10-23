@@ -36,7 +36,7 @@ _PREFIX_LANG = {
     "zf": "zh", "zm": "zh",
 }
 
-MAX_TEXT_LEN = 2000
+MAX_TEXT_LEN = 4000
 
 _lock = threading.Lock()
 _kokoro: Kokoro | None = None
@@ -81,8 +81,8 @@ def list_voices() -> list[dict]:
 
 
 def generate(text: str, voice: str = "af_heart", lang: str | None = None,
-             speed: float = 1.0) -> bytes:
-    """Generate speech, return WAV bytes."""
+             speed: float = 1.0, fmt: str = "mp3") -> tuple[bytes, float]:
+    """Generate speech, return (audio_bytes, duration_s)."""
     if not text or not text.strip():
         raise ValueError("Text is empty")
     text = text.strip()[:MAX_TEXT_LEN]
@@ -94,9 +94,14 @@ def generate(text: str, voice: str = "af_heart", lang: str | None = None,
     with _lock:
         audio, sr = _kokoro.create(text, voice=voice, speed=speed, lang=espeak_lang)
 
+    duration = round(len(audio) / sr, 2)
     buf = io.BytesIO()
-    sf.write(buf, audio, sr, format="WAV", subtype="PCM_16")
-    return buf.getvalue()
+    fmt_upper = fmt.upper()
+    if fmt_upper in ("MP3", "MPEG"):
+        sf.write(buf, audio, sr, format="MP3")
+    else:
+        sf.write(buf, audio, sr, format="WAV", subtype="PCM_16")
+    return buf.getvalue(), duration
 
 
 def audio_stats(wav_bytes: bytes) -> dict:

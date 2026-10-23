@@ -4,6 +4,8 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
+  height: 100%;
+  max-height: 100%;
   border: 1px solid var(--stroke);
   border-radius: var(--r-lg);
   background: linear-gradient(180deg, rgba(15,17,30,0.72), rgba(9,11,24,0.82));
@@ -14,11 +16,14 @@
 .stream {
   flex: 1;
   min-height: 0;
+  height: 100%;
   overflow-y: auto;
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
   gap: 14px;
-  padding: 16px 14px 10px;
+  padding: 16px 18px 14px;
+  scroll-behavior: smooth;
 }
 
 /* ── head ───────────────────────────────────────────────────────────────── */
@@ -528,3 +533,267 @@ input[type="range"]::-moz-range-thumb {
 }
 .chip-act:hover { color: var(--cyan); }
 .chip-x:hover { color: #ff6b8a; }
+
+/* ── Head Action Pills & Memory Popover ─────────────────────────────────── */
+.head-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--ink-dim);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.head-pill-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+.head-pill-btn.on {
+  color: var(--accent);
+  border-color: rgba(255, 95, 162, 0.4);
+  background: rgba(255, 95, 162, 0.1);
+}
+.new-chat-btn:hover {
+  border-color: rgba(0, 220, 200, 0.4);
+  color: var(--cyan);
+}
+.memory-trigger-wrap {
+  position: relative;
+}
+.memory-count-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: rgba(168, 85, 247, 0.3);
+  color: #c084fc;
+  font-size: 10px;
+  font-family: var(--font-geist-mono), monospace;
+}
+
+/* Memory popover */
+.memory-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 320px;
+  max-width: 90vw;
+  background: rgba(16, 18, 32, 0.96);
+  border: 1px solid rgba(168, 85, 247, 0.28);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55), 0 0 12px rgba(168, 85, 247, 0.12);
+  border-radius: var(--r-md);
+  padding: 12px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  animation: popIn 0.18s ease;
+  backdrop-filter: blur(12px);
+}
+.memory-pop-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.memory-pop-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.memory-pop-title .text-purple {
+  color: #c084fc;
+}
+.memory-badge {
+  font-size: 10px;
+  font-family: var(--font-geist-mono), monospace;
+  background: rgba(168, 85, 247, 0.2);
+  color: #d8b4fe;
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+.memory-close-btn {
+  border: none;
+  background: transparent;
+  color: var(--ink-dim);
+  cursor: pointer;
+  padding: 2px;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+}
+.memory-close-btn:hover {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.08);
+}
+.memory-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: var(--r-xs);
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  font-size: 10.5px;
+  color: #a7f3d0;
+  line-height: 1.35;
+}
+.memory-note code {
+  font-family: var(--font-geist-mono), monospace;
+  color: #6ee7b7;
+  background: rgba(0, 0, 0, 0.2);
+  padding: 1px 3px;
+  border-radius: 3px;
+}
+.memory-list {
+  max-height: 180px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-right: 2px;
+}
+.memory-empty {
+  font-size: 11px;
+  color: var(--ink-dim);
+  line-height: 1.4;
+  padding: 8px 4px;
+  text-align: center;
+}
+.memory-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+.memory-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.memory-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+.memory-key {
+  font-size: 10px;
+  font-family: var(--font-geist-mono), monospace;
+  color: #c084fc;
+  font-weight: 600;
+}
+.memory-val {
+  font-size: 11.5px;
+  color: var(--ink);
+  word-break: break-word;
+}
+.memory-del-btn {
+  border: none;
+  background: transparent;
+  color: var(--ink-dim);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.memory-del-btn:hover {
+  color: #ff6b8a;
+  background: rgba(255, 107, 138, 0.15);
+}
+.memory-add-form {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 2px;
+}
+.memory-input {
+  min-width: 0;
+  padding: 5px 8px;
+  font-size: 11px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 5px;
+  color: var(--ink);
+  outline: none;
+  transition: border-color 0.15s;
+}
+.memory-input:focus {
+  border-color: #a855f7;
+}
+.memory-input:not(.val) {
+  width: 32%;
+  font-family: var(--font-geist-mono), monospace;
+}
+.memory-input.val {
+  flex: 1;
+}
+.memory-add-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 5px 8px;
+  font-size: 11px;
+  border: 1px solid rgba(168, 85, 247, 0.4);
+  background: rgba(168, 85, 247, 0.2);
+  color: #e9d5ff;
+  border-radius: 5px;
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.15s;
+}
+.memory-add-btn:hover:not(:disabled) {
+  background: rgba(168, 85, 247, 0.35);
+  border-color: rgba(168, 85, 247, 0.6);
+}
+.memory-add-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.memory-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+.memory-clear-btn {
+  border: none;
+  background: transparent;
+  color: var(--ink-faint);
+  font-size: 10px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.memory-clear-btn:hover {
+  color: #ff6b8a;
+}
+
+/* Privacy Chip */
+.privacy-chip {
+  background: rgba(16, 185, 129, 0.1) !important;
+  border-color: rgba(16, 185, 129, 0.3) !important;
+  color: #6ee7b7 !important;
+  display: inline-flex !important;
+  align-items: center;
+  gap: 4px;
+}
+.privacy-icon {
+  color: #10b981;
+}

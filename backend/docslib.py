@@ -196,15 +196,41 @@ def clear() -> None:
         _DOCS.clear()
 
 
-def retrieve(question: str, k: int = 4, doc_id: str | None = None) -> list[str]:
-    """Top-k chunks across all docs (or one), for LLM grounding."""
+def get_fallback_chunks(doc_id: str | None = None, k: int = 4) -> list[str]:
+    """Return initial document chunks when keyword matching yields zero hits."""
     with _docs_lock:
         pool = {i: d for i, d in _DOCS.items() if doc_id is None or i == doc_id}
     if not pool:
         return []
+    out = []
+    for d in pool.values():
+        for c in d["chunks"][:k]:
+            out.append(f"[{d['name']}] {c}" if len(pool) > 1 else c)
+            if len(out) >= k:
+                return out
+    return out
+
+
+def retrieve(question: str, k: int = 4, doc_id: str | None = None,
+             history: list[dict] | None = None) -> list[str]:
+    """Top-k chunks across all docs (or one), for LLM grounding.
+    Enriches query with recent conversational context if available."""
+    with _docs_lock:
+        pool = {i: d for i, d in _DOCS.items() if doc_id is None or i == doc_id}
+    if not pool:
+        return []
+
+    search_query = question
+    if history:
+        recent_text = " ".join(
+            str(h.get("text", "")).strip() for h in history[-2:]
+        )
+        if recent_text:
+            search_query = f"{question} {recent_text[:250]}"
+
     if doc_id is not None:
         d = pool[doc_id]
-        hits = d["index"].search(question, k)
+        hits = d["index"].search(search_query, k)
         if hits:
             return [d["chunks"][i] for i, _s in hits][:k]
         # weak/zero scores: front-load the doc head so the LLM still has context
@@ -212,7 +238,7 @@ def retrieve(question: str, k: int = 4, doc_id: str | None = None) -> list[str]:
     per = max(1, k // max(1, len(pool)))
     out: list[str] = []
     for d in pool.values():
-        for i, _s in d["index"].search(question, per):
+        for i, _s in d["index"].search(search_query, per):
             out.append(f"[{d['name']}] {d['chunks'][i]}")
     return out[:k]
 

@@ -17,10 +17,13 @@ def _read(wav: bytes) -> tuple[np.ndarray, int]:
     return data, sr
 
 
-def _write(data: np.ndarray, sr: int) -> bytes:
+def _write(data: np.ndarray, sr: int, fmt: str = "mp3") -> bytes:
     data = np.clip(data, -1.0, 1.0)
     buf = io.BytesIO()
-    sf.write(buf, data.astype(np.float32), sr, format="WAV", subtype="PCM_16")
+    if fmt.lower() in ("mp3", "mpeg"):
+        sf.write(buf, data.astype(np.float32), sr, format="MP3")
+    else:
+        sf.write(buf, data.astype(np.float32), sr, format="WAV", subtype="PCM_16")
     return buf.getvalue()
 
 
@@ -58,11 +61,11 @@ def _echo(data: np.ndarray, sr: int) -> np.ndarray:
     return out
 
 
-def apply_effect(wav: bytes, effect: str) -> bytes:
+def apply_effect(audio_bytes: bytes, effect: str, fmt: str = "mp3") -> bytes:
     effect = (effect or "none").lower()
     if effect in ("none", ""):
-        return wav
-    data, sr = _read(wav)
+        return audio_bytes
+    data, sr = _read(audio_bytes)
     if effect == "pitch_up":
         data = _pitch(data, 1.25)
     elif effect == "pitch_down":
@@ -77,5 +80,5 @@ def apply_effect(wav: bytes, effect: str) -> bytes:
     elif effect == "echo":
         data = _echo(data, sr)
     else:
-        return wav
-    return _write(data, sr)
+        return audio_bytes
+    return _write(data, sr, fmt=fmt)

@@ -2,10 +2,12 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import {
-  BookOpen, ChevronDown, Download, FileText, FolderOpen, Languages,
-  MessageSquare, Mic, Paperclip, Play, Radio, Send, SlidersHorizontal,
-  Sparkles, Target, Timer, Volume2,
+  BookOpen, Brain, Check, ChevronDown, Copy, Download, FileText, FolderOpen,
+  Globe, Loader2, MessageSquare, Mic, Paperclip, Play, Plus, Radio, Send, SlidersHorizontal,
+  Sparkles, Target, Timer, Trash2, Volume2, Zap,
 } from "lucide-react";
+import { MemoryPop } from "./MemoryPop";
+import { StreamingMarkdown } from "./StreamingMarkdown";
 import {
   type DocMeta,
   type TimerEntry,
@@ -13,7 +15,7 @@ import {
   type Voice,
 } from "@/lib/api";
 
-export type Mode = "chat" | "voice" | "read" | "tutor" | "translate" | "docs";
+export type Mode = "chat" | "voice" | "read" | "tutor" | "docs";
 export type Msg = {
   id: number;
   role: "user" | "ai";
@@ -22,6 +24,7 @@ export type Msg = {
   dur?: number;
   emotion?: string;
   toolLabel?: string;
+  audioLoading?: boolean;
 };
 
 type Props = {
@@ -56,6 +59,10 @@ type Props = {
   setLoopOn: (b: boolean) => void;
   toolsOn: boolean;
   setToolsOn: (b: boolean) => void;
+  webSearchOn?: boolean;
+  setWebSearchOn?: (b: boolean) => void;
+  brain?: "fast" | "smart";
+  setBrain?: (b: "fast" | "smart") => void;
   chatLang: "en" | "hi";
   setChatLang: (l: "en" | "hi") => void;
   llmReady: boolean;
@@ -74,17 +81,19 @@ type Props = {
   tutorChecking: boolean;
   tutorResult: TutorResult | null;
   onTutorSpeak: () => void;
-  // translate
-  direction: "en-hi" | "hi-en";
-  setDirection: (d: "en-hi" | "hi-en") => void;
-  onTranslate: () => void;
-  translating: boolean;
-  translateResult: string | null;
-  onSpeakTranslation: () => void;
-  // export
+  // export & session
   onExportMd: () => void;
   onExportZip: () => void;
   exporting: boolean;
+  onClearSession?: () => void;
+  // uploads
+  onReadUpload?: (f: File) => void;
+  onVoiceUpload?: (f: File) => void;
+  // memory
+  memory?: Record<string, string>;
+  onAddMemory?: (key: string, value: string) => void;
+  onDeleteMemory?: (key: string) => void;
+  onClearMemory?: () => void;
   // docs (offline RAG)
   docList: DocMeta[];
   activeDocId: string | null;
@@ -95,6 +104,7 @@ type Props = {
   onDocSelect: (id: string) => void;
   onDocDelete: (id: string) => void;
   onSpeakMsg?: (id: number, text: string) => void;
+  audioLoadingId?: number | null;
   // live voice + karaoke
   liveState?: "idle" | "listening" | "thinking" | "talking" | "happy" | null;
   timings?: { text: string; start: number; end: number }[];
@@ -106,7 +116,6 @@ const MODES: { id: Mode; Icon: typeof MessageSquare; label: string }[] = [
   { id: "voice", Icon: Radio, label: "Voice" },
   { id: "read", Icon: BookOpen, label: "Read" },
   { id: "tutor", Icon: Target, label: "Tutor" },
-  { id: "translate", Icon: Languages, label: "Translate" },
   { id: "docs", Icon: Paperclip, label: "Docs" },
 ];
 
@@ -156,9 +165,11 @@ const TUTOR_SAMPLES = [
 export default function ControlPanel(p: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [tuneOpen, setTuneOpen] = useState(false);
+  const [memoryOpen, setMemoryOpen] = useState(false);
   const streamRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const tuneRef = useRef<HTMLDivElement>(null);
+  const memoryRef = useRef<HTMLDivElement>(null);
 
   // close popovers on outside click / escape
   useEffect(() => {
@@ -167,11 +178,14 @@ export default function ControlPanel(p: Props) {
         setMenuOpen(false);
       if (tuneOpen && tuneRef.current && !tuneRef.current.contains(e.target as Node))
         setTuneOpen(false);
+      if (memoryOpen && memoryRef.current && !memoryRef.current.contains(e.target as Node))
+        setMemoryOpen(false);
     };
     const esc = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setMenuOpen(false);
         setTuneOpen(false);
+        setMemoryOpen(false);
       }
     };
     document.addEventListener("mousedown", close);
@@ -180,13 +194,14 @@ export default function ControlPanel(p: Props) {
       document.removeEventListener("mousedown", close);
       document.removeEventListener("keydown", esc);
     };
-  }, [menuOpen, tuneOpen]);
+  }, [menuOpen, tuneOpen, memoryOpen]);
 
-  // autoscroll
+  // autoscroll on new message, stream tokens, and tutor result
+  const lastMsgText = p.msgs[p.msgs.length - 1]?.text ?? "";
   useEffect(() => {
     const el = streamRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [p.msgs.length, p.translateResult, p.tutorResult, p.readProgress]);
+  }, [p.msgs.length, lastMsgText, p.tutorResult, p.readProgress, p.chatBusy, p.docsBusy]);
 
   const shownVoices =
     p.voices?.filter((v) => allowedVoice(v) && voiceMatchesFilter(v, p.langFilter)) ?? [];
@@ -200,7 +215,6 @@ export default function ControlPanel(p: Props) {
     voice: "Type anything — she speaks it out loud…",
     read: "Paste an article or document…",
     tutor: "Pick a sample below, or type a practice line…",
-    translate: p.direction === "en-hi" ? "Type English — get Hindi…" : "हिंदी लिखें — अंग्रेज़ी में सुनें…",
     docs: "Ask anything about the uploaded file…",
   };
 
@@ -233,6 +247,38 @@ export default function ControlPanel(p: Props) {
           )}
         </div>
         <div className="head-right">
+          {p.onClearSession && (
+            <button
+              className="head-pill-btn new-chat-btn"
+              onClick={p.onClearSession}
+              title="Start a fresh conversation"
+            >
+              <Plus size={12} /> new chat
+            </button>
+          )}
+
+          <div className="memory-trigger-wrap" ref={memoryRef}>
+            <button
+              className={`head-pill-btn memory-pill-btn ${memoryOpen ? "on" : ""}`}
+              onClick={() => setMemoryOpen((o) => !o)}
+              title="View & manage Kiko's persistent memory"
+            >
+              <Brain size={12} /> memory
+              {p.memory && Object.keys(p.memory).length > 0 && (
+                <span className="memory-count-dot">{Object.keys(p.memory).length}</span>
+              )}
+            </button>
+            {memoryOpen && (
+              <MemoryPop
+                memory={p.memory ?? {}}
+                onAdd={p.onAddMemory}
+                onDelete={p.onDeleteMemory}
+                onClear={p.onClearMemory}
+                onClose={() => setMemoryOpen(false)}
+              />
+            )}
+          </div>
+
           {p.liveState && p.liveState !== "idle" && (
             <span className={`live-dot ${p.liveState}`}>
               {p.liveState === "listening"
@@ -276,21 +322,41 @@ export default function ControlPanel(p: Props) {
       {/* -------------------------------------------------------- STREAM */}
       <div className="stream" ref={streamRef}>
         <ChatIntro p={p} />
-        {p.msgs.map((m) => (
+        {p.msgs.map((m, idx) => (
           <div key={m.id} className={`bubble-msg ${m.role}`}>
-            <span className="who">{m.role === "user" ? "You" : "Kiko"}</span>
+            <div className="bubble-header">
+              <span className="who">{m.role === "user" ? "You" : "Kiko"}</span>
+              {m.emotion && m.emotion !== "neutral" && (
+                <span className={`emo-badge ${m.emotion}`}>{m.emotion}</span>
+              )}
+              {m.toolLabel && (
+                <span className={`tool-chip ${m.toolLabel.includes("web") ? "web" : m.toolLabel.includes("doc") ? "doc" : ""}`}>
+                  {m.toolLabel.includes("web") ? <Globe size={11} /> : m.toolLabel.includes("doc") ? <FileText size={11} /> : <Sparkles size={11} />} {m.toolLabel}
+                </span>
+              )}
+            </div>
             <div className="bbody">
-              {m.toolLabel && <span className="tool-chip"><Sparkles size={11} /> {m.toolLabel}</span>}
-              {m.role === "ai" ? <MdLite text={m.text} /> : m.text}
+              {m.role === "ai" ? (
+                <StreamingMarkdown
+                  content={m.text}
+                  isStreaming={(p.chatBusy || p.docsBusy) && idx === p.msgs.length - 1}
+                />
+              ) : (
+                <div className="user-text">{m.text}</div>
+              )}
               {m.role === "ai" && m.text && (
                 <div className="mini">
-                  {m.url ? (
+                  {m.audioLoading || p.audioLoadingId === m.id ? (
+                    <span className="mini-loading" title="Generating full MP3 voice...">
+                      <Loader2 size={11} className="spin-icon" /> generating voice…
+                    </span>
+                  ) : m.url ? (
                     <>
                       <button className="mini-btn" onClick={() => p.onReplay(m.url!)}>
                         <Play size={11} /> replay
                       </button>
-                      <a className="mini-btn" href={m.url} download={`kiko-${m.id}.wav`}>
-                        <Download size={11} /> save
+                      <a className="mini-btn" href={m.url} download={`kiko-${m.id}.mp3`}>
+                        <Download size={11} /> save mp3
                       </a>
                     </>
                   ) : (
@@ -300,13 +366,22 @@ export default function ControlPanel(p: Props) {
                       </button>
                     )
                   )}
-                  {m.dur ? <span className="dur-tag">{m.dur.toFixed(1)}s</span> : null}
+                  <button
+                    className="mini-btn"
+                    onClick={() => navigator.clipboard.writeText(m.text)}
+                    title="Copy response"
+                  >
+                    <Copy size={11} /> copy
+                  </button>
+                  {m.dur && !m.audioLoading && p.audioLoadingId !== m.id ? (
+                    <span className="dur-tag">{m.dur.toFixed(1)}s</span>
+                  ) : null}
                 </div>
               )}
             </div>
           </div>
         ))}
-        {p.chatBusy && (
+        {p.chatBusy && p.msgs[p.msgs.length - 1]?.role !== "ai" && (
           <div className="bubble-msg ai">
             <span className="who">Kiko</span>
             <div className="bbody typing">
@@ -317,22 +392,8 @@ export default function ControlPanel(p: Props) {
           </div>
         )}
 
-        {/* translate result as a stream reply */}
-        {p.translateResult && (
-          <div className="bubble-msg ai">
-            <span className="who">Kiko</span>
-            <div className="bbody">
-              <span className="tool-chip"><Languages size={11} /> {p.direction === "en-hi" ? "EN → हिंदी" : "हिंदी → EN"}</span>
-              <p className="tr-text">{p.translateResult}</p>
-              <button className="mini-btn" onClick={p.onSpeakTranslation}>
-                <Play size={11} /> hear it
-              </button>
-            </div>
-          </div>
-        )}
-
         {/* tutor score as a stream reply */}
-        {p.tutorResult && (
+        {p.mode === "tutor" && p.tutorResult && (
           <div className="bubble-msg ai">
             <span className="who">Kiko</span>
             <div className="bbody tutor-result">
@@ -417,26 +478,6 @@ export default function ControlPanel(p: Props) {
           </div>
         )}
 
-        {/* translate: direction segmented */}
-        {p.mode === "translate" && (
-          <div className="composer-settings-row">
-            <div className="segmented">
-              <button
-                className={`seg ${p.direction === "en-hi" ? "on" : ""}`}
-                onClick={() => p.setDirection("en-hi")}
-              >
-                EN → हिंदी
-              </button>
-              <button
-                className={`seg ${p.direction === "hi-en" ? "on" : ""}`}
-                onClick={() => p.setDirection("hi-en")}
-              >
-                हिंदी → EN
-              </button>
-            </div>
-          </div>
-        )}
-
         {/* chat: quick toggles row */}
         {p.mode === "chat" && (
           <div className="composer-settings-row">
@@ -454,6 +495,24 @@ export default function ControlPanel(p: Props) {
             >
               {p.toolsOn ? "⚙ tools on" : "⚙ tools"}
             </button>
+            {p.setWebSearchOn && (
+              <button
+                className={`toggle ${p.webSearchOn ? "on web-on" : ""}`}
+                onClick={() => p.setWebSearchOn?.(!p.webSearchOn)}
+                title="Search the live web with DuckDuckGo"
+              >
+                <Globe size={12} /> {p.webSearchOn ? "web on" : "web"}
+              </button>
+            )}
+            {p.setBrain && (
+              <button
+                className={`toggle brain-mode ${p.brain === "fast" ? "fast" : "smart"}`}
+                onClick={() => p.setBrain?.(p.brain === "fast" ? "smart" : "fast")}
+                title={p.brain === "fast" ? "Fast Brain (0.6B) · sub-1.5s instant turns" : "Smart Brain (1.7B) · deep reasoning & coding"}
+              >
+                {p.brain === "fast" ? <><Zap size={11} /> fast</> : <><Brain size={11} /> smart</>}
+              </button>
+            )}
             <button
               className={`toggle ${p.chatLang === "hi" ? "on" : ""}`}
               onClick={() => p.setChatLang(p.chatLang === "hi" ? "en" : "hi")}
@@ -464,6 +523,35 @@ export default function ControlPanel(p: Props) {
             {p.recording && (
               <span className="listening-live">
                 <span className="pulse-dot" /> listening…
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* docs: quick toggles row */}
+        {p.mode === "docs" && (
+          <div className="composer-settings-row">
+            {p.setWebSearchOn && (
+              <button
+                className={`toggle ${p.webSearchOn ? "on web-on" : ""}`}
+                onClick={() => p.setWebSearchOn?.(!p.webSearchOn)}
+                title="Search live web alongside document context"
+              >
+                <Globe size={12} /> {p.webSearchOn ? "web + docs on" : "web search"}
+              </button>
+            )}
+            {p.setBrain && (
+              <button
+                className={`toggle brain-mode ${p.brain === "fast" ? "fast" : "smart"}`}
+                onClick={() => p.setBrain?.(p.brain === "fast" ? "smart" : "fast")}
+                title={p.brain === "fast" ? "Fast Brain (0.6B) · instant answers" : "Smart Brain (1.7B) · deep comprehension"}
+              >
+                {p.brain === "fast" ? <><Zap size={11} /> fast (0.6B)</> : <><Brain size={11} /> smart (1.7B)</>}
+              </button>
+            )}
+            {p.recording && (
+              <span className="listening-live">
+                <span className="pulse-dot" /> listening to question…
               </span>
             )}
           </div>
@@ -516,6 +604,36 @@ export default function ControlPanel(p: Props) {
             </div>
 
             <div className="ct-left ct-mic-wrap">
+              {p.mode === "read" && p.onReadUpload && (
+                <label className="tool-btn" title="Import article / document (.pdf, .docx, .md, .txt)">
+                  <FolderOpen size={13} /> import file
+                  <input
+                    type="file"
+                    accept=".md,.markdown,.pdf,.docx,.txt,.csv,.json,.log,.rst"
+                    style={{ display: "none" }}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) p.onReadUpload!(f);
+                      e.currentTarget.value = "";
+                    }}
+                  />
+                </label>
+              )}
+              {p.mode === "voice" && p.onVoiceUpload && (
+                <label className="tool-btn" title="Load voiceover script (.txt, .md, .pdf, .docx)">
+                  <FolderOpen size={13} /> load script
+                  <input
+                    type="file"
+                    accept=".md,.markdown,.pdf,.docx,.txt,.csv,.json,.log,.rst"
+                    style={{ display: "none" }}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) p.onVoiceUpload!(f);
+                      e.currentTarget.value = "";
+                    }}
+                  />
+                </label>
+              )}
               {p.mode === "docs" && (
                 <>
                   <label className="tool-btn" title="add a .md / .pdf / .docx">
@@ -543,18 +661,24 @@ export default function ControlPanel(p: Props) {
                   )}
                 </>
               )}
-              {(p.mode === "chat" || p.mode === "voice" || p.mode === "tutor") && (
+              {(p.mode === "chat" || p.mode === "voice" || p.mode === "tutor" || p.mode === "docs") && (
                 <button
                   className={`mic-btn ${p.recording ? "rec" : ""}`}
                   onClick={p.mode === "tutor" ? p.onTutorRecord : p.onMicToggle}
                   title={
-                    p.mode === "tutor" ? "record and score" : p.mode === "voice" ? "speak instead of typing" : "talk to Kiko"
+                    p.mode === "tutor"
+                      ? "record and score"
+                      : p.mode === "voice"
+                        ? "speak instead of typing"
+                        : p.mode === "docs"
+                          ? "ask document with voice"
+                          : "talk to Kiko"
                   }
                 >
                   {p.recording ? <span className="stop-sq" /> : <Mic size={16} />}
                 </button>
               )}
-              {(p.mode === "chat" || p.mode === "voice") && p.recording && (
+              {(p.mode === "chat" || p.mode === "voice" || p.mode === "docs") && p.recording && (
                 <span className="mic-hint mini-note">listening… tap to stop</span>
               )}
             </div>
@@ -598,12 +722,10 @@ export default function ControlPanel(p: Props) {
                     ? "send"
                     : p.mode === "voice"
                       ? "generate"
-                      : p.mode === "translate"
-                        ? "translate"
-                        : "go"
+                      : "go"
                 }
               >
-                {p.chatBusy || p.busy || p.translating || p.docsBusy ? "…" : <Send size={15} />}
+                {p.mode === "chat" ? (p.chatBusy ? "…" : <Send size={15} />) : p.mode === "docs" ? (p.docsBusy ? "…" : <Send size={15} />) : (p.busy ? "…" : <Send size={15} />)}
               </button>
             </div>
           </div>
@@ -635,8 +757,6 @@ function composerDisabled(p: Props) {
       return p.reading || !body;
     case "tutor":
       return p.tutorChecking || !p.tutorTarget.trim();
-    case "translate":
-      return p.translating || !p.text.trim();
     case "docs":
       return p.docsBusy || !p.text.trim();
   }
@@ -649,9 +769,6 @@ function fireMain(p: Props) {
       break;
     case "voice":
       p.onGenerate();
-      break;
-    case "translate":
-      p.onTranslate();
       break;
     case "read":
       p.onReadAloud();
@@ -724,29 +841,10 @@ function TunePop(p: Props & { speedStyle: CSSProperties; voices: Voice[] }) {
   );
 }
 
-/* ----------------------------------------------------------- code renderer */
-function MdLite({ text }: { text: string }) {
-  const parts = text.split(/```(?:\w+)?/);
-  return (
-    <div className="mdbody">
-      {parts.map((chunk, i) =>
-        i % 2 === 1 ? (
-          <pre key={i} className="code-blk">
-            <code>{chunk.replace(/^[a-z]+\n/, "")}</code>
-          </pre>
-        ) : (
-          <span key={i} className="prose">
-            {chunk}
-          </span>
-        )
-      )}
-    </div>
-  );
-}
 
 /* ------------------------------------------------------------- intro card */
 function ChatIntro({ p }: { p: Props }) {
-  if (p.msgs.length || p.translateResult || p.tutorResult) return null;
+  if (p.msgs.length || p.tutorResult) return null;
   const copy: Record<Mode, { Icon: typeof MessageSquare; title: string; sub: string }> = {
     chat: {
       Icon: MessageSquare,
@@ -757,7 +855,6 @@ function ChatIntro({ p }: { p: Props }) {
     read: { Icon: BookOpen, title: "Read aloud", sub: "paste a document — she reads it with karaoke subtitles, or summarizes it" },
     tutor: { Icon: Target, title: "Pronunciation tutor", sub: "she says the line, you repeat it — whisper scores every word" },
     docs: { Icon: Paperclip, title: "Ask the doc", sub: "add a markdown, PDF or Word file — she reads it fully offline and answers from it" },
-    translate: { Icon: Languages, title: "Translate & speak", sub: "English ⇄ Hindi, spoken aloud — fully offline" },
   };
   const c = copy[p.mode];
   return (

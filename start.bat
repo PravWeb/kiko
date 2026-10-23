@@ -67,7 +67,6 @@ if not exist "%HF_HOME%\hub\models--Systran--faster-whisper-small" (
   uv run python -c "from faster_whisper import WhisperModel; WhisperModel('small', device='cpu', compute_type='int8')"
   if errorlevel 1 echo [warn] STT model download skipped - it will download on first voice use.
 )
-popd
 
 echo [app] starting http://localhost:8000
 start "" http://localhost:8000

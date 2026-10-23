@@ -25,7 +25,19 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=2000)
     history: list[ChatTurn] = Field(default_factory=list)
     tools_enabled: bool = True
+    websearch_enabled: bool = False
     lang: Literal["en", "hi"] = "en"
+    brain: str = "fast"
+
+
+class SearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=500)
+
+
+@router.post("/api/search")
+def search_web_api(req: SearchRequest):
+    """Direct live web search endpoint."""
+    return tools.web_search({"query": req.query})
 
 
 @router.post("/api/chat")
@@ -35,7 +47,8 @@ def chat(req: ChatRequest):
     history = [{"who": h.who, "text": h.text} for h in req.history]
     try:
         result = agent.chat(req.message, history, allow_tools=req.tools_enabled,
-                            lang=req.lang)
+                            lang=req.lang, brain=req.brain,
+                            websearch_enabled=req.websearch_enabled)
     except Exception as e:
         log.exception("chat failed")
         raise HTTPException(500, f"LLM error: {e}")
@@ -54,7 +67,9 @@ def chat_stream(req: ChatRequest):
                                         [{"who": h.who, "text": h.text}
                                          for h in req.history],
                                         allow_tools=req.tools_enabled,
-                                        lang=req.lang):
+                                        lang=req.lang,
+                                        brain=req.brain,
+                                        websearch_enabled=req.websearch_enabled):
                 yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
         except Exception as e:
             log.exception("chat stream failed")
@@ -66,3 +81,31 @@ def chat_stream(req: ChatRequest):
 @router.get("/api/timers")
 def timers():
     return {"timers": tools.list_timers(), "memory": tools.memory_dump()}
+
+
+class MemoryItem(BaseModel):
+    key: str = Field(min_length=1, max_length=50)
+    value: str = Field(min_length=1, max_length=400)
+
+
+@router.get("/api/memory")
+def get_memory():
+    return {"memory": tools.memory_dump()}
+
+
+@router.post("/api/memory")
+def set_memory(item: MemoryItem):
+    res = tools.remember(item.key, item.value)
+    return {"ok": True, **res, "memory": tools.memory_dump()}
+
+
+@router.delete("/api/memory/{key}")
+def delete_memory_key(key: str):
+    res = tools.forget(key)
+    return {"ok": True, **res, "memory": tools.memory_dump()}
+
+
+@router.delete("/api/memory")
+def clear_all_memory():
+    tools.clear_memory()
+    return {"ok": True, "memory": {}}

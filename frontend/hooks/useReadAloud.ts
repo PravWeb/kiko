@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { speakRequest, summarizeRequest } from "@/lib/api";
+import { parseFile, speakRequest, summarizeRequest } from "@/lib/api";
 import { chunkText } from "@/lib/karaoke";
 
 type PlayBlob = (blob: Blob, url?: string, dur?: number, text?: string, karaoke?: boolean) => Promise<void>;
@@ -12,6 +12,24 @@ export function useReadAloud({ playBlob, toast }: { playBlob: PlayBlob; toast: (
   const [reading, setReading] = useState(false);
   const [readProgress, setReadProgress] = useState<{ i: number; n: number } | null>(null);
   const cancelRef = useRef(false);
+
+  const uploadFile = useCallback(
+    async (file: File) => {
+      try {
+        toast(`📄 Parsing ${file.name}...`);
+        const res = await parseFile(file);
+        if (res.text) {
+          setText(res.text);
+          toast(`✓ Loaded ${res.name} (${res.words} words)`);
+        } else {
+          toast("No readable text found in file");
+        }
+      } catch (e) {
+        toast(e instanceof Error ? e.message : "File parse failed");
+      }
+    },
+    [toast]
+  );
 
   const summarize = useCallback(async () => {
     if (!text.trim()) return;
@@ -59,7 +77,7 @@ export function useReadAloud({ playBlob, toast }: { playBlob: PlayBlob; toast: (
     setReading(false);
   }, []);
 
-  return { text, setText, summarizing, reading, readProgress, summarize, readAloud, cancel };
+  return { text, setText, summarizing, reading, readProgress, summarize, readAloud, cancel, uploadFile };
 }
 
 export default useReadAloud;

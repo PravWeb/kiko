@@ -128,9 +128,9 @@ def _synth(text: str, cfg: dict) -> bytes:
     vfx = {"warm": "pitch_down", "bright": "pitch_up"}.get(suffix, "none")
     effect = cfg.get("effect") if cfg.get("effect") not in (None, "none") else vfx
     with manager.protect("tts"):
-        wav = tts.generate(text, voice=voice, speed=float(cfg.get("speed", 1.0)))
+        wav, _ = tts.generate(text, voice=voice, speed=float(cfg.get("speed", 1.0)), fmt="wav")
     if effect and effect != "none" and effect in fx.EFFECTS:
-        wav = fx.apply_effect(wav, effect)
+        wav = fx.apply_effect(wav, effect, fmt="wav")
     return wav
 
 
@@ -154,25 +154,19 @@ async def voice_ws(ws: WebSocket):
         async with send_lock:
             await ws.send_bytes(data)
 
-    async def run_turn() -> None:
+    async def run_turn_for_text(text: str) -> None:
         nonlocal busy
         busy = True
         interrupted.clear()
         try:
-            audio = np.concatenate(lead + buf).astype(np.float32)
             await send({"type": "state", "state": "thinking"})
-            lang = "hi" if cfg.get("lang") == "hi" else None
-            res = await asyncio.to_thread(
-                stt.transcribe, audio, SR, lang)
-            text = (res.get("text") or "").strip()
-            if not text:
-                await send({"type": "cleared"})
-                return
             await send({"type": "stt", "text": text})
+            voice_brain = str(cfg.get("brain", "fast"))
             out = await asyncio.to_thread(
                 agent.chat, text, cfg.get("history", []),
                 bool(cfg.get("tools", True)),
-                str(cfg.get("lang", "en")))
+                str(cfg.get("lang", "en")),
+                voice_brain)
             await send({
                 "type": "turn_start",
                 "emotion": out.get("emotion", "neutral"),
@@ -195,6 +189,8 @@ async def voice_ws(ws: WebSocket):
                 await send({"type": "cleared"})
             else:
                 await send({"type": "done",
+                            "reply": out.get("reply", ""),
+                            "emotion": out.get("emotion", "neutral"),
                             "elapsed_s": out.get("elapsed_s", 0),
                             "tool_calls": out.get("tool_calls", []),
                             "synth_s": round(time.time() - t0, 2)})
@@ -207,6 +203,33 @@ async def voice_ws(ws: WebSocket):
             buf.clear()
             lead.clear()
 
+    async def run_audio_turn() -> None:
+        nonlocal busy
+        busy = True
+        interrupted.clear()
+        try:
+            audio = np.concatenate(lead + buf).astype(np.float32)
+            await send({"type": "state", "state": "thinking"})
+            lang = "hi" if cfg.get("lang") == "hi" else None
+            res = await asyncio.to_thread(
+                stt.transcribe, audio, SR, lang)
+            text = (res.get("text") or "").strip()
+            if not text:
+                await send({"type": "cleared"})
+                busy = False
+                buf.clear()
+                lead.clear()
+                await send({"type": "state", "state": "listening"})
+                return
+            await run_turn_for_text(text)
+        except Exception as e:
+            log.exception("audio turn failed")
+            await send({"type": "error", "detail": str(e)})
+            busy = False
+            buf.clear()
+            lead.clear()
+            await send({"type": "state", "state": "listening"})
+
     turn_task: asyncio.Task | None = None
 
     async def finalize(ev: str) -> None:
@@ -214,7 +237,7 @@ async def voice_ws(ws: WebSocket):
         if turn_task and not turn_task.done():
             return  # already processing a turn
         if ev in ("end", "timeout") and buf:
-            t = asyncio.create_task(run_turn())
+            t = asyncio.create_task(run_audio_turn())
             turn_task = t
 
     try:
@@ -235,6 +258,10 @@ async def voice_ws(ws: WebSocket):
                             cfg[k] = data[k]
                     cfg["tools"] = bool(data.get("tools", True))
                     cfg["history"] = list(data.get("history") or [])
+                elif mtype == "text":
+                    u_text = str(data.get("text", "")).strip()
+                    if u_text and not busy:
+                        turn_task = asyncio.create_task(run_turn_for_text(u_text))
                 elif mtype == "interrupt":
                     interrupted.set()
                     if turn_task and not turn_task.done():

@@ -1,10 +1,11 @@
-"""Task routes: translate / summarize / rewrite / tutor score."""
+"""Task routes: summarize / rewrite / tutor score."""
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
+import docslib
 import nlp
 import tutor
 from modelmgr import manager
@@ -13,9 +14,19 @@ log = logging.getLogger("routes_tasks")
 router = APIRouter()
 
 
-class TranslateRequest(BaseModel):
-    text: str = Field(min_length=1, max_length=1500)
-    direction: str = "en-hi"
+@router.post("/api/parse-file")
+async def parse_uploaded_file(file: UploadFile = File(...)):
+    """Parse text from .txt, .md, .pdf, .docx files for Read Aloud or Voice Studio."""
+    data = await file.read()
+    if len(data) > 20 * 1024 * 1024:
+        raise HTTPException(413, "file too large (20MB max)")
+    try:
+        _, text = docslib.parse_text(file.filename or "file.txt", data)
+        text = text.strip()
+        words = len(text.split())
+        return {"name": file.filename or "file.txt", "text": text, "words": words}
+    except Exception as e:
+        raise HTTPException(422, f"Failed to parse file: {e}")
 
 
 class SummarizeRequest(BaseModel):
@@ -30,19 +41,6 @@ class RewriteRequest(BaseModel):
 class TutorRequest(BaseModel):
     target: str = Field(min_length=1, max_length=600)
     said: str = Field(default="", max_length=1500)
-
-
-@router.post("/api/translate")
-def translate(req: TranslateRequest):
-    if req.direction not in ("en-hi", "hi-en"):
-        raise HTTPException(422, "direction must be en-hi or hi-en")
-    if not __import__("llm").is_available():
-        raise HTTPException(503, "LLM weights missing")
-    try:
-        return nlp.translate(req.text, req.direction)
-    except Exception as e:
-        log.exception("translate failed")
-        raise HTTPException(500, f"LLM error: {e}")
 
 
 @router.post("/api/summarize")

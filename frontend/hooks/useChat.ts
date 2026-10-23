@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import { chatStream, speakRequest } from "@/lib/api";
 import type { Msg } from "@/components/ControlPanel";
+import { cleanForSpeech } from "@/lib/speechClean";
 
 type PlayBlob = (blob: Blob, url?: string, dur?: number, text?: string, karaoke?: boolean) => Promise<void>;
 
@@ -27,8 +28,10 @@ export function useChat({
   const [chatBusy, setChatBusy] = useState(false);
   const [loopOn, setLoopOn] = useState(false);
   const [toolsOn, setToolsOn] = useState(true);
+  const [webSearchOn, setWebSearchOn] = useState(false);
+  const [brain, setBrain] = useState<"fast" | "smart">("fast");
   const idRef = useRef(0);
-  const emoRe = useRef(/\[emotion:\w+\]/g);
+  const emoRe = useRef(/\[emotion:\w+\]|\[emotion[^[\]]*$/gi);
 
   const sendChat = useCallback(
     async (textOverride?: string) => {
@@ -39,7 +42,8 @@ export function useChat({
       setMsgs((m) => [...m, userMsg]);
       setText("");
       const kikoId = ++idRef.current;
-      const acc = { raw: "", shown: false };
+      const acc = { raw: "" };
+      setMsgs((m) => [...m, { id: kikoId, role: "ai", text: "" }]);
       try {
         const history = msgs.slice(-8).map((m) => ({
           who: m.role === "user" ? ("user" as const) : ("kiko" as const),
@@ -50,7 +54,9 @@ export function useChat({
             message: body,
             history,
             tools_enabled: toolsOn,
+            websearch_enabled: webSearchOn,
             lang,
+            brain,
           },
           (t) => {
             acc.raw += t;
@@ -58,38 +64,45 @@ export function useChat({
             setMsgs((m) =>
               m.map((x) => (x.id === kikoId ? { ...x, text: shownText } : x))
             );
-            if (!acc.shown) {
-              acc.shown = true;
-              setChatBusy(false);
-            }
           }
         );
         const toolLabel = res.tool_calls?.[0]?.tool;
         const finalText = res.reply;
+        const spoken = cleanForSpeech(finalText);
         setMsgs((m) =>
           m.map((x) =>
             x.id === kikoId
-              ? { ...x, text: finalText, emotion: res.emotion, toolLabel }
+              ? {
+                  ...x,
+                  text: finalText,
+                  emotion: res.emotion,
+                  toolLabel,
+                  audioLoading: !!spoken,
+                }
               : x
           )
         );
-        // speak the prose only — reading code aloud is horrid
-        const spoken = finalText
-          .replace(/```[\s\S]*?(?:```|$)/g, " ")
-          .replace(/\s+/g, " ")
-          .trim();
-        try {
-          const { blob, duration } = await speakRequest({
-            text: spoken.slice(0, 220),
-            voice: lang === "hi" && !voice.startsWith("h") ? "hf_alpha" : voice,
-            speed: 1,
-          });
-          const url = URL.createObjectURL(blob);
-          setMsgs((m) =>
-            m.map((x) => (x.id === kikoId ? { ...x, url, dur: duration } : x))
-          );
-          await playBlob(blob, url, duration, spoken);
-        } catch {}
+        setChatBusy(false);
+
+        // speak the prose only — clean markdown and code blocks, voice full text
+        if (spoken) {
+          try {
+            const { blob, duration } = await speakRequest({
+              text: spoken,
+              voice: lang === "hi" && !voice.startsWith("h") ? "hf_alpha" : voice,
+              speed: 1,
+            });
+            const url = URL.createObjectURL(blob);
+            setMsgs((m) =>
+              m.map((x) => (x.id === kikoId ? { ...x, url, dur: duration, audioLoading: false } : x))
+            );
+            void playBlob(blob, url, duration, spoken);
+          } catch {
+            setMsgs((m) =>
+              m.map((x) => (x.id === kikoId ? { ...x, audioLoading: false } : x))
+            );
+          }
+        }
         if (loopOn) {
           try {
             await startMic();
@@ -102,7 +115,7 @@ export function useChat({
         setChatBusy(false);
       }
     },
-    [text, chatBusy, msgs, toolsOn, loopOn, playBlob, startMic, toast, voice, lang]
+    [text, chatBusy, msgs, toolsOn, webSearchOn, brain, loopOn, playBlob, startMic, toast, voice, lang]
   );
 
   return {
@@ -113,6 +126,10 @@ export function useChat({
     setLoopOn,
     toolsOn,
     setToolsOn,
+    webSearchOn,
+    setWebSearchOn,
+    brain,
+    setBrain,
     sendChat,
   };
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { ShieldCheck } from "lucide-react";
 import type { Status } from "@/lib/api";
 import EngineBay from "@/components/panel/EngineBay";
 
@@ -31,6 +32,10 @@ export default function Header({ status, onToggleEngineBay }: Props) {
         <span className={`chip ${status?.llm.ready ? "ok" : status?.llm.available ? "load" : ""}`}>
           <span className="dot" style={{ background: "var(--violet)" }} />
           LLM {status?.llm.ready ? "ready" : status?.llm.available ? "loading" : "idle"}
+        </span>
+        <span className="chip privacy-chip" title="100% on-device AI. Zero cloud telemetry, zero API keys.">
+          <ShieldCheck size={11} className="privacy-icon" />
+          100% Offline
         </span>
         <EngineBay status={status} onToggle={onToggleEngineBay} />
       </div>
