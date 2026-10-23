@@ -13,6 +13,7 @@ import re
 import threading
 import time
 import unicodedata
+import uuid
 from collections import Counter
 
 log = logging.getLogger("docslib")
@@ -154,7 +155,9 @@ def add_doc(name: str, data: bytes) -> dict:
     if not text:
         raise ValueError("document contains no readable text")
     chunks = _chunk(text)
-    doc_id = f"d{int(time.time() * 1000) % 10**9}"
+    # Uploads can complete in the same millisecond; stable unique IDs prevent
+    # one document silently replacing another in the in-memory index.
+    doc_id = f"d{uuid.uuid4().hex[:16]}"
     with _docs_lock:
         _DOCS[doc_id] = {
             "id": doc_id,
@@ -229,6 +232,8 @@ def retrieve(question: str, k: int = 4, doc_id: str | None = None,
             search_query = f"{question} {recent_text[:250]}"
 
     if doc_id is not None:
+        if doc_id not in pool:
+            return []
         d = pool[doc_id]
         hits = d["index"].search(search_query, k)
         if hits:

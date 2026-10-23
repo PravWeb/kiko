@@ -9,18 +9,15 @@ import { useChat } from "@/hooks/useChat";
 import { useMic } from "@/hooks/useMic";
 import { useVoiceLive } from "@/hooks/useVoiceLive";
 import { useDocs } from "@/hooks/useDocs";
-import { useReadAloud } from "@/hooks/useReadAloud";
 import { useSession } from "@/hooks/useSession";
 import { useSpeechPlayer } from "@/hooks/useSpeechPlayer";
 import { useStatus } from "@/hooks/useStatus";
 import { useTimers } from "@/hooks/useTimers";
-import { useTutor } from "@/hooks/useTutor";
 import { useVoiceStudio } from "@/hooks/useVoiceStudio";
 import { useMemory } from "@/hooks/useMemory";
 import { speakRequest } from "@/lib/api";
 import { cleanForSpeech } from "@/lib/speechClean";
 import type { Mode } from "@/components/ControlPanel";
-import type { Emotion } from "@/lib/charState";
 
 export default function Home() {
   const toast = useCallback((t: string) => {
@@ -29,15 +26,12 @@ export default function Home() {
   }, []);
   const [error, setError] = useState<string | null>(null);
 
-  const { status, languages, voices, llmReady, llmLoading } = useStatus();
+  const { status, voices } = useStatus();
   const session = useSession();
   const player = useSpeechPlayer();
   const mic = useMic();
   const memory = useMemory(toast);
 
-  const [charEmotion, setCharEmotion] = useState<Emotion>("neutral");
-  void charEmotion;
-  void setCharEmotion;
   const [chatLang, setChatLang] = useState<"en" | "hi">("en");
   const [audioLoadingId, setAudioLoadingId] = useState<number | null>(null);
 
@@ -101,9 +95,6 @@ export default function Home() {
     [voiceStudio.voice, voiceStudio.speed, player, session.setMsgs, toast]
   );
 
-  const readAloud = useReadAloud({ playBlob: player.playBlob, toast });
-  const tutor = useTutor({ playBlob: player.playBlob });
-
   const timers = useTimers({
     onFire: (t) => {
       player.setCharState("happy");
@@ -118,11 +109,6 @@ export default function Home() {
 
   const bothReady = status?.tts.ready && status?.stt.ready;
 
-  // sync voiceStudio text into readAloud/tutor/translate via shared? They own their own text.
-  // Read aloud uses its own text; seed from voiceStudio text on mode switch handled in panel.
-
-  const handleTimersExport = () => {};
-
   return (
     <>
       <Background />
@@ -133,26 +119,10 @@ export default function Home() {
             mode={mode}
             setMode={setMode}
             text={
-              mode === "chat"
-                ? chat.text
-                : mode === "read"
-                  ? readAloud.text
-                  : mode === "tutor"
-                    ? tutor.target
-                    : mode === "docs"
-                      ? docQuery
-                      : voiceStudio.text
+              mode === "chat" ? chat.text : mode === "docs" ? docQuery : voiceStudio.text
             }
             setText={
-              mode === "chat"
-                ? chat.setText
-                : mode === "read"
-                  ? readAloud.setText
-                  : mode === "tutor"
-                    ? tutor.setTarget
-                    : mode === "docs"
-                      ? setDocQuery
-                      : voiceStudio.setText
+              mode === "chat" ? chat.setText : mode === "docs" ? setDocQuery : voiceStudio.setText
             }
             busy={player.busy}
             speaking={player.charState === "talking"}
@@ -160,25 +130,21 @@ export default function Home() {
             recording={
               mode === "voice"
                 ? voiceStudio.recording
-                : mode === "tutor"
-                  ? tutor.recording
-                  : mode === "docs"
+                : mode === "docs"
                     ? mic.recording
                     : (mic.recording || voiceLive.active)
             }
             level={
               mode === "voice"
                 ? voiceStudio.level
-                : mode === "tutor"
-                  ? tutor.level
-                  : mode === "docs"
+                : mode === "docs"
                     ? mic.level
                     : (voiceLive.active ? voiceLive.level : mic.level)
             }
             transcript={
               voiceLive.active
                 ? voiceLive.interim
-                : (mode === "voice" ? voiceStudio.transcript : mic.transcript || tutor.transcript)
+                : (mode === "voice" ? voiceStudio.transcript : mic.transcript)
             }
             voices={voices}
             langFilter={voiceStudio.langFilter}
@@ -221,27 +187,15 @@ export default function Home() {
             setBrain={mode === "docs" ? docs.setBrain : chat.setBrain}
             chatLang={chatLang}
             setChatLang={setChatLang}
-            llmReady={llmReady}
-            llmLoading={llmLoading}
             timers={timers.timers}
-            onSummarize={() => readAloud.summarize()}
-            summarizing={readAloud.summarizing}
-            onReadAloud={() =>
-              readAloud.readAloud(voiceStudio.voice, voiceStudio.speed)
-            }
-            reading={readAloud.reading}
-            readProgress={readAloud.readProgress}
-            tutorTarget={tutor.target}
-            setTutorTarget={tutor.setTarget}
-            onTutorRecord={() => tutor.recordAndScore()}
-            tutorChecking={tutor.checking}
-            tutorResult={tutor.result}
-            onTutorSpeak={() => tutor.speakTarget()}
             onExportMd={() => session.exportMarkdown()}
             onExportZip={() => session.exportZip()}
             exporting={session.exporting}
-            onClearSession={session.clearSession}
-            onReadUpload={readAloud.uploadFile}
+            onNewChat={session.startNewSession}
+            sessions={session.sessions}
+            currentSessionId={session.currentId}
+            onLoadSession={session.loadSession}
+            onDeleteSession={session.deleteSession}
             onVoiceUpload={voiceStudio.uploadScript}
             memory={memory.memory}
             onAddMemory={memory.add}
@@ -266,8 +220,8 @@ export default function Home() {
         </main>
         {!bothReady && (
           <div className="prep-note">
-            warming up the voice engines — <b>first launch takes ~10 seconds</b>,
-            afterwards everything runs fully offline.
+            warming up the voice engines — <b>first model setup needs internet</b>,
+            then core voice features run locally. Web search is optional.
           </div>
         )}
       </div>

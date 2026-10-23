@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { ShieldCheck } from "lucide-react";
 import type { Status } from "@/lib/api";
 import EngineBay from "@/components/panel/EngineBay";
@@ -17,7 +16,7 @@ export default function Header({ status, onToggleEngineBay }: Props) {
         <img className="brand-glyph" src="/kiko.png" alt="Kiko" draggable={false} />
         <div>
           <h1>KIKO</h1>
-          <small>offline voice companion · 100% local</small>
+          <small>offline voice companion · on-device AI</small>
         </div>
       </div>
       <div className="status-row">
@@ -33,9 +32,9 @@ export default function Header({ status, onToggleEngineBay }: Props) {
           <span className="dot" style={{ background: "var(--violet)" }} />
           LLM {status?.llm.ready ? "ready" : status?.llm.available ? "loading" : "idle"}
         </span>
-        <span className="chip privacy-chip" title="100% on-device AI. Zero cloud telemetry, zero API keys.">
+        <span className="chip privacy-chip" title="AI runs on this device. Optional web search sends your query to DuckDuckGo.">
           <ShieldCheck size={11} className="privacy-icon" />
-          100% Offline
+          Local AI
         </span>
         <EngineBay status={status} onToggle={onToggleEngineBay} />
       </div>

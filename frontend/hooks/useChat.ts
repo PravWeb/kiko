@@ -4,6 +4,7 @@ import { useCallback, useRef, useState } from "react";
 import { chatStream, speakRequest } from "@/lib/api";
 import type { Msg } from "@/components/ControlPanel";
 import { cleanForSpeech } from "@/lib/speechClean";
+import { nextMessageId } from "@/lib/messageIds";
 
 type PlayBlob = (blob: Blob, url?: string, dur?: number, text?: string, karaoke?: boolean) => Promise<void>;
 
@@ -29,21 +30,32 @@ export function useChat({
   const [loopOn, setLoopOn] = useState(false);
   const [toolsOn, setToolsOn] = useState(true);
   const [webSearchOn, setWebSearchOn] = useState(false);
-  const [brain, setBrain] = useState<"fast" | "smart">("fast");
-  const idRef = useRef(0);
+  // Text chat prioritizes answer quality. Live voice keeps its separate fast brain.
+  const [brain, setBrain] = useState<"fast" | "smart">("smart");
   const emoRe = useRef(/\[emotion:\w+\]|\[emotion[^[\]]*$/gi);
 
   const sendChat = useCallback(
-    async (textOverride?: string) => {
+    async (textOverride?: string, fromVoice: boolean = false) => {
       const body = (textOverride ?? text).trim();
       if (!body || chatBusy) return;
       setChatBusy(true);
-      const userMsg: Msg = { id: ++idRef.current, role: "user", text: body };
+      const userMsg: Msg = { id: nextMessageId(), role: "user", text: body };
       setMsgs((m) => [...m, userMsg]);
       setText("");
-      const kikoId = ++idRef.current;
-      const acc = { raw: "" };
-      setMsgs((m) => [...m, { id: kikoId, role: "ai", text: "" }]);
+      const kikoId = nextMessageId();
+      const acc: { raw: string; flushTimer?: number } = { raw: "" };
+      const initialSearching = !!webSearchOn;
+      setMsgs((m) => [
+        ...m,
+        {
+          id: kikoId,
+          role: "ai",
+          text: "",
+          isSearchingWeb: initialSearching,
+          toolLabel: initialSearching ? "searching web…" : undefined,
+          statusText: initialSearching ? "Searching the web… 🌐" : undefined,
+        },
+      ]);
       try {
         const history = msgs.slice(-8).map((m) => ({
           who: m.role === "user" ? ("user" as const) : ("kiko" as const),
@@ -60,15 +72,65 @@ export function useChat({
           },
           (t) => {
             acc.raw += t;
-            const shownText = acc.raw.replace(emoRe.current, " ").trimStart();
-            setMsgs((m) =>
-              m.map((x) => (x.id === kikoId ? { ...x, text: shownText } : x))
-            );
+            if (!acc.flushTimer) {
+              acc.flushTimer = window.setTimeout(() => {
+                acc.flushTimer = undefined;
+                const shownText = acc.raw.replace(emoRe.current, " ").trimStart();
+                setMsgs((m) =>
+                  m.map((x) =>
+                    x.id === kikoId
+                      ? {
+                          ...x,
+                          text: shownText,
+                          isSearchingWeb: false,
+                        }
+                      : x
+                  )
+                );
+              }, 40);
+            }
+          },
+          (status) => {
+            if (status.phase === "web_search") {
+              setMsgs((m) =>
+                m.map((x) =>
+                  x.id === kikoId
+                    ? {
+                        ...x,
+                        isSearchingWeb: true,
+                        toolLabel: "searching web…",
+                        statusText: status.status || "Searching the web… 🌐",
+                      }
+                    : x
+                )
+              );
+            } else if (status.phase === "web_search_done") {
+              setMsgs((m) =>
+                m.map((x) =>
+                  x.id === kikoId
+                    ? {
+                        ...x,
+                        isSearchingWeb: false,
+                        toolLabel: "web search",
+                        statusText: undefined,
+                      }
+                    : x
+                )
+              );
+            }
           }
         );
-        const toolLabel = res.tool_calls?.[0]?.tool;
+        const toolName = res.tool_calls?.[0]?.tool;
+        const toolLabel = toolName === "web_search" || webSearchOn
+          ? "web search"
+          : toolName === "memory_saved"
+          ? "memory saved"
+          : toolName ?? (res.active_skills?.[0] ? `skill · ${res.active_skills[0]}` : undefined);
+        if (acc.flushTimer) window.clearTimeout(acc.flushTimer);
+        acc.flushTimer = undefined;
         const finalText = res.reply;
         const spoken = cleanForSpeech(finalText);
+        const shouldAutoSpeak = loopOn || fromVoice;
         setMsgs((m) =>
           m.map((x) =>
             x.id === kikoId
@@ -77,15 +139,17 @@ export function useChat({
                   text: finalText,
                   emotion: res.emotion,
                   toolLabel,
-                  audioLoading: !!spoken,
+                  isSearchingWeb: false,
+                  statusText: undefined,
+                  audioLoading: shouldAutoSpeak && !!spoken,
                 }
               : x
           )
         );
         setChatBusy(false);
 
-        // speak the prose only — clean markdown and code blocks, voice full text
-        if (spoken) {
+        // Auto-speak only when talking via mic or hands-free; otherwise text streams fast and user can tap "listen"
+        if (shouldAutoSpeak && spoken) {
           try {
             const { blob, duration } = await speakRequest({
               text: spoken,

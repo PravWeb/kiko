@@ -1,4 +1,10 @@
 import { chromium } from "playwright";
+import fs from "fs";
+import path from "path";
+
+const URL = process.env.KIKO_URL || "http://127.0.0.1:8000/";
+const SHOT_DIR = process.env.KIKO_TEST_OUTPUT_DIR || "/tmp/kiko-e2e";
+fs.mkdirSync(SHOT_DIR, { recursive: true });
 
 async function run() {
   console.log("Launching browser for comprehensive chat experience test...");
@@ -8,8 +14,8 @@ async function run() {
 
   page.on("pageerror", (err) => console.error("[Browser Error]:", err));
 
-  console.log("Loading Kiko on http://127.0.0.1:8000/ ...");
-  await page.goto("http://127.0.0.1:8000/", { waitUntil: "networkidle" });
+  console.log("Loading Kiko on", URL);
+  await page.goto(URL, { waitUntil: "networkidle" });
   await page.waitForTimeout(2000);
 
   const sendMessage = async (text, stepName) => {
@@ -42,7 +48,7 @@ async function run() {
     });
     console.log(`<<< Kiko replied (${stepName}):\n` + lastMsg);
 
-    const shotPath = `/home/thepraveeneffect/.gemini/antigravity/brain/b5e22d6c-113c-4fe5-a8c0-fad2494a8d8a/chat_step_${stepName}.png`;
+    const shotPath = path.join(SHOT_DIR, `chat_step_${stepName}.png`);
     await page.screenshot({ path: shotPath });
     console.log(`Saved screenshot to ${shotPath}`);
   };

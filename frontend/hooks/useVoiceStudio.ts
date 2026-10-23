@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { parseFile, speakRequest, transcribeRequest } from "@/lib/api";
 import type { Msg } from "@/components/ControlPanel";
 import type { Effect } from "@/lib/api";
 import { useMic } from "@/hooks/useMic";
+import { nextMessageId } from "@/lib/messageIds";
 
 type PlayBlob = (blob: Blob, url?: string, dur?: number, text?: string, karaoke?: boolean) => Promise<void>;
 
@@ -25,7 +26,6 @@ export function useVoiceStudio({
   const [effect, setEffect] = useState<Effect>("none");
   const [langFilter, setLangFilter] = useState("ALL");
   const [busy, setBusy] = useState(false);
-  const idRef = useRef(0);
   const mic = useMic();
 
   const generate = useCallback(
@@ -33,7 +33,7 @@ export function useVoiceStudio({
       const body = (raw ?? text).trim();
       if (!body || busy) return;
       setBusy(true);
-      const msgId = ++idRef.current;
+      const msgId = nextMessageId();
       setMsgs((m) => [
         ...m,
         { id: msgId, role: "ai", text: body, audioLoading: true },

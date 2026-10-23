@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { wsVoiceUrl } from "@/lib/api";
 import type { CharState, Emotion } from "@/lib/charState";
 import type { Msg } from "@/components/ControlPanel";
+import { nextMessageId } from "@/lib/messageIds";
 
 type ServerState = "listening" | "thinking" | "talking";
 
@@ -63,7 +64,6 @@ export function useVoiceLive({
   const lastRef = useRef<{ url: string; dur: number } | null>(null);
   const emotionRef = useRef<string>("neutral");
   const toolRef = useRef<string | null>(null);
-  const idRef = useRef(0);
   const msgsRef = useRef(msgs);
   const voiceRef = useRef(voice);
   const langRef = useRef(lang);
@@ -98,7 +98,7 @@ export function useVoiceLive({
     setMsgs((m) => [
       ...m,
       {
-        id: ++idRef.current,
+        id: nextMessageId(),
         role: "ai",
         text: reply,
         url,
@@ -223,7 +223,7 @@ export function useVoiceLive({
             if (text) {
               setMsgs((m) => [
                 ...m,
-                { id: ++idRef.current, role: "user", text },
+                { id: nextMessageId(), role: "user", text },
               ]);
             }
           } else if (type === "turn_start") {
@@ -234,6 +234,11 @@ export function useVoiceLive({
                 : null;
             replyRef.current = "";
             setCharState("thinking");
+          } else if (type === "turn_meta") {
+            emotionRef.current = String(ev.emotion ?? emotionRef.current);
+            if (Array.isArray(ev.tool_calls) && ev.tool_calls.length > 0) {
+              toolRef.current = String((ev.tool_calls[0] as { tool?: unknown }).tool ?? "tool");
+            }
           } else if (type === "sentence") {
             replyRef.current = `${replyRef.current} ${String(ev.text ?? "")}`.trim();
           } else if (type === "done") {

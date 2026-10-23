@@ -2,20 +2,21 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import {
-  BookOpen, Brain, Check, ChevronDown, Copy, Download, FileText, FolderOpen,
+  Brain, ChevronDown, Copy, Download, FileText, FolderOpen,
   Globe, Loader2, MessageSquare, Mic, Paperclip, Play, Plus, Radio, Send, SlidersHorizontal,
-  Sparkles, Target, Timer, Trash2, Volume2, Zap,
+  Sparkles, Timer, Volume2, Zap,
 } from "lucide-react";
 import { MemoryPop } from "./MemoryPop";
+import { SessionsPop } from "./SessionsPop";
 import { StreamingMarkdown } from "./StreamingMarkdown";
 import {
   type DocMeta,
   type TimerEntry,
-  type TutorResult,
   type Voice,
 } from "@/lib/api";
+import type { ChatSession } from "@/hooks/useSession";
 
-export type Mode = "chat" | "voice" | "read" | "tutor" | "docs";
+export type Mode = "chat" | "voice" | "docs";
 export type Msg = {
   id: number;
   role: "user" | "ai";
@@ -25,6 +26,8 @@ export type Msg = {
   emotion?: string;
   toolLabel?: string;
   audioLoading?: boolean;
+  statusText?: string;
+  isSearchingWeb?: boolean;
 };
 
 type Props = {
@@ -65,29 +68,17 @@ type Props = {
   setBrain?: (b: "fast" | "smart") => void;
   chatLang: "en" | "hi";
   setChatLang: (l: "en" | "hi") => void;
-  llmReady: boolean;
-  llmLoading: boolean;
   timers: TimerEntry[];
-  // read
-  onSummarize: () => void;
-  summarizing: boolean;
-  onReadAloud: () => void;
-  reading: boolean;
-  readProgress: { i: number; n: number } | null;
-  // tutor
-  tutorTarget: string;
-  setTutorTarget: (s: string) => void;
-  onTutorRecord: () => void;
-  tutorChecking: boolean;
-  tutorResult: TutorResult | null;
-  onTutorSpeak: () => void;
   // export & session
   onExportMd: () => void;
   onExportZip: () => void;
   exporting: boolean;
-  onClearSession?: () => void;
+  onNewChat?: () => void;
+  sessions: ChatSession[];
+  currentSessionId: string;
+  onLoadSession: (id: string) => void;
+  onDeleteSession: (id: string) => void;
   // uploads
-  onReadUpload?: (f: File) => void;
   onVoiceUpload?: (f: File) => void;
   // memory
   memory?: Record<string, string>;
@@ -111,12 +102,10 @@ type Props = {
   activeWord?: number;
 };
 
-const MODES: { id: Mode; Icon: typeof MessageSquare; label: string }[] = [
-  { id: "chat", Icon: MessageSquare, label: "Chat" },
-  { id: "voice", Icon: Radio, label: "Voice" },
-  { id: "read", Icon: BookOpen, label: "Read" },
-  { id: "tutor", Icon: Target, label: "Tutor" },
-  { id: "docs", Icon: Paperclip, label: "Docs" },
+const MODES: { id: Mode; Icon: typeof MessageSquare; label: string; purpose: string }[] = [
+  { id: "chat", Icon: MessageSquare, label: "Chat", purpose: "Everyday help" },
+  { id: "voice", Icon: Radio, label: "Voice", purpose: "Create spoken audio" },
+  { id: "docs", Icon: Paperclip, label: "Docs", purpose: "Ask your files" },
 ];
 
 const EFFECTS = [
@@ -141,6 +130,25 @@ function allowedVoice(v: Voice) {
   return /^(af|am|bf|bm|hf|hm)_/.test(v.id);
 }
 
+const VOICE_SCRIPTS = [
+  {
+    label: "English Pitch",
+    text: "Welcome judges! I am Kiko, a high-performance offline voice companion. I run completely locally on this device without any internet connection, telemetry, or API keys.",
+  },
+  {
+    label: "Hindi (A-Z Hinglish)",
+    text: "Namaste dosto! Mera naam Kiko hai aur main aapka 100% offline local AI companion hoon. Mujhe chalane ke liye kisi internet ya cloud server ki zaroorat nahi hai. Hum kal ka hackathon zaroor jeetenge!",
+  },
+  {
+    label: "Neural Architecture",
+    text: "By executing quantized neural weights directly on device silicon, Kiko eliminates round-trip cloud latency and ensures user data never leaves this machine.",
+  },
+  {
+    label: "Creative Story",
+    text: "High above the Martian red dunes, a solar-powered rover detected an unexpected anomaly: a cluster of luminous crystals echoing harmonic frequencies across the silent night.",
+  },
+];
+
 export function voiceMatchesFilter(v: Voice, f: string) {
   switch (f) {
     case "English (US)":
@@ -154,22 +162,16 @@ export function voiceMatchesFilter(v: Voice, f: string) {
   }
 }
 
-const TUTOR_SAMPLES = [
-  "The quick brown fox jumps over the lazy dog.",
-  "She sells sea shells by the seashore.",
-  "Kiko runs entirely offline, no internet needed.",
-  "नमस्ते, मैं किको हूँ और मैं पूरी तरह ऑफलाइन चलती हूँ।",
-  "यह लैपटॉप बिना इंटरनेट के भी सब कुछ कर सकता है।",
-];
-
 export default function ControlPanel(p: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [tuneOpen, setTuneOpen] = useState(false);
   const [memoryOpen, setMemoryOpen] = useState(false);
+  const [sessionsOpen, setSessionsOpen] = useState(false);
   const streamRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const tuneRef = useRef<HTMLDivElement>(null);
   const memoryRef = useRef<HTMLDivElement>(null);
+  const sessionsRef = useRef<HTMLDivElement>(null);
 
   // close popovers on outside click / escape
   useEffect(() => {
@@ -180,12 +182,15 @@ export default function ControlPanel(p: Props) {
         setTuneOpen(false);
       if (memoryOpen && memoryRef.current && !memoryRef.current.contains(e.target as Node))
         setMemoryOpen(false);
+      if (sessionsOpen && sessionsRef.current && !sessionsRef.current.contains(e.target as Node))
+        setSessionsOpen(false);
     };
     const esc = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setMenuOpen(false);
         setTuneOpen(false);
         setMemoryOpen(false);
+        setSessionsOpen(false);
       }
     };
     document.addEventListener("mousedown", close);
@@ -194,14 +199,14 @@ export default function ControlPanel(p: Props) {
       document.removeEventListener("mousedown", close);
       document.removeEventListener("keydown", esc);
     };
-  }, [menuOpen, tuneOpen, memoryOpen]);
+  }, [menuOpen, tuneOpen, memoryOpen, sessionsOpen]);
 
-  // autoscroll on new message, stream tokens, and tutor result
+  // autoscroll on new message and streaming text
   const lastMsgText = p.msgs[p.msgs.length - 1]?.text ?? "";
   useEffect(() => {
     const el = streamRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [p.msgs.length, lastMsgText, p.tutorResult, p.readProgress, p.chatBusy, p.docsBusy]);
+  }, [p.msgs.length, lastMsgText, p.chatBusy, p.docsBusy]);
 
   const shownVoices =
     p.voices?.filter((v) => allowedVoice(v) && voiceMatchesFilter(v, p.langFilter)) ?? [];
@@ -212,10 +217,8 @@ export default function ControlPanel(p: Props) {
 
   const composerPlaceholder: Record<Mode, string> = {
     chat: "Message Kiko…",
-    voice: "Type anything — she speaks it out loud…",
-    read: "Paste an article or document…",
-    tutor: "Pick a sample below, or type a practice line…",
-    docs: "Ask anything about the uploaded file…",
+    voice: "Write a script to generate spoken audio…",
+    docs: "Ask a question about your uploaded files…",
   };
 
   return (
@@ -240,17 +243,23 @@ export default function ControlPanel(p: Props) {
                   }}
                 >
                   <m.Icon size={15} />
-                  <span>{m.label}</span>
+                  <span className="pselect-item-copy"><span>{m.label}</span><small>{m.purpose}</small></span>
                 </button>
               ))}
             </div>
           )}
         </div>
         <div className="head-right">
-          {p.onClearSession && (
+          <div className="sessions-trigger-wrap" ref={sessionsRef}>
+            <button className={`head-pill-btn ${sessionsOpen ? "on" : ""}`} onClick={() => setSessionsOpen((o) => !o)} title="Browse saved chats">
+              <MessageSquare size={12} /> chats <span className="memory-count-dot">{p.sessions.length}</span>
+            </button>
+            {sessionsOpen && <SessionsPop sessions={p.sessions} currentId={p.currentSessionId} onSelect={(id) => { p.onLoadSession(id); setSessionsOpen(false); }} onDelete={p.onDeleteSession} />}
+          </div>
+          {p.onNewChat && (
             <button
               className="head-pill-btn new-chat-btn"
-              onClick={p.onClearSession}
+              onClick={p.onNewChat}
               title="Start a fresh conversation"
             >
               <Plus size={12} /> new chat
@@ -288,18 +297,6 @@ export default function ControlPanel(p: Props) {
                   : "speaking…"}
             </span>
           )}
-          <span
-            className={`brain-dot ${p.llmReady ? "ok" : p.llmLoading ? "load" : ""}`}
-            title={
-              p.llmReady
-                ? "brain online"
-                : p.llmLoading
-                  ? "loading brain…"
-                  : "brain idle — loads on first chat"
-            }
-          >
-            {p.llmReady ? "brain online" : p.llmLoading ? "waking her up…" : "brain idle"}
-          </span>
           <button
             className="icon-btn"
             onClick={p.onExportMd}
@@ -330,12 +327,36 @@ export default function ControlPanel(p: Props) {
                 <span className={`emo-badge ${m.emotion}`}>{m.emotion}</span>
               )}
               {m.toolLabel && (
-                <span className={`tool-chip ${m.toolLabel.includes("web") ? "web" : m.toolLabel.includes("doc") ? "doc" : ""}`}>
-                  {m.toolLabel.includes("web") ? <Globe size={11} /> : m.toolLabel.includes("doc") ? <FileText size={11} /> : <Sparkles size={11} />} {m.toolLabel}
+                <span
+                  className={`tool-chip ${
+                    m.toolLabel.includes("web")
+                      ? "web"
+                      : m.toolLabel.includes("doc")
+                      ? "doc"
+                      : ""
+                  } ${m.isSearchingWeb ? "searching" : ""}`}
+                >
+                  {m.toolLabel.includes("web") ? (
+                    <Globe size={11} className={m.isSearchingWeb ? "spin-slow" : ""} />
+                  ) : m.toolLabel.includes("doc") ? (
+                    <FileText size={11} />
+                  ) : (
+                    <Sparkles size={11} />
+                  )}{" "}
+                  {m.toolLabel}
                 </span>
               )}
             </div>
             <div className="bbody">
+              {m.isSearchingWeb && (
+                <div className="web-search-banner">
+                  <Globe size={13} className="spin-slow" />
+                  <span>{m.statusText || "Searching the web…"}</span>
+                  <span className="search-dots">
+                    <span>.</span><span>.</span><span>.</span>
+                  </span>
+                </div>
+              )}
               {m.role === "ai" ? (
                 <StreamingMarkdown
                   content={m.text}
@@ -392,34 +413,6 @@ export default function ControlPanel(p: Props) {
           </div>
         )}
 
-        {/* tutor score as a stream reply */}
-        {p.mode === "tutor" && p.tutorResult && (
-          <div className="bubble-msg ai">
-            <span className="who">Kiko</span>
-            <div className="bbody tutor-result">
-              <div className="score-ring" data-score={p.tutorResult.score}>
-                <b>{p.tutorResult.score}</b>
-                <span>/100</span>
-              </div>
-              <div className="score-words">
-                {p.tutorResult.words.map((w, i) => (
-                  <span key={i} className={`sword ${w.ok ? "ok" : "bad"}`}>
-                    {w.word}
-                  </span>
-                ))}
-              </div>
-              <p className="score-msg">{p.tutorResult.message}</p>
-            </div>
-          </div>
-        )}
-
-        {/* tutor heard echo */}
-        {p.mode === "tutor" && p.transcript && (
-          <div className="bubble-msg user">
-            <span className="who">Heard</span>
-            <div className="bbody">{p.transcript}</div>
-          </div>
-        )}
       </div>
 
       {/* ------------------------------------------------------ COMPOSER */}
@@ -557,17 +550,18 @@ export default function ControlPanel(p: Props) {
           </div>
         )}
 
-        {/* tutor: sample chips */}
-        {p.mode === "tutor" && (
+        {/* voice: sample scripts row */}
+        {p.mode === "voice" && (
           <div className="composer-settings-row sample-row">
-            {TUTOR_SAMPLES.map((s) => (
+            {VOICE_SCRIPTS.map((s) => (
               <button
-                key={s}
-                className={`sample-chip ${p.tutorTarget === s ? "on" : ""}`}
-                onClick={() => p.setTutorTarget(s)}
+                key={s.label}
+                type="button"
+                className={`sample-chip ${p.text === s.text ? "on" : ""}`}
+                onClick={() => p.setText(s.text)}
+                title={s.text}
               >
-                {s.slice(0, 30)}
-                {s.length > 30 ? "…" : ""}
+                🎙 {s.label}
               </button>
             ))}
           </div>
@@ -576,13 +570,12 @@ export default function ControlPanel(p: Props) {
         <div className={`composer ${p.recording ? "rec" : ""}`}>
           <textarea
             className="composer-input"
-            value={p.mode === "tutor" ? p.tutorTarget : p.text}
+            value={p.text}
             maxLength={2000}
-            rows={p.mode === "read" ? 3 : 1}
+            rows={1}
             placeholder={p.recording ? "listening… speak now" : composerPlaceholder[p.mode]}
             onChange={(e) => {
-              if (p.mode === "tutor") p.setTutorTarget(e.target.value);
-              else p.setText(e.target.value);
+              p.setText(e.target.value);
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
@@ -604,21 +597,6 @@ export default function ControlPanel(p: Props) {
             </div>
 
             <div className="ct-left ct-mic-wrap">
-              {p.mode === "read" && p.onReadUpload && (
-                <label className="tool-btn" title="Import article / document (.pdf, .docx, .md, .txt)">
-                  <FolderOpen size={13} /> import file
-                  <input
-                    type="file"
-                    accept=".md,.markdown,.pdf,.docx,.txt,.csv,.json,.log,.rst"
-                    style={{ display: "none" }}
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) p.onReadUpload!(f);
-                      e.currentTarget.value = "";
-                    }}
-                  />
-                </label>
-              )}
               {p.mode === "voice" && p.onVoiceUpload && (
                 <label className="tool-btn" title="Load voiceover script (.txt, .md, .pdf, .docx)">
                   <FolderOpen size={13} /> load script
@@ -661,14 +639,12 @@ export default function ControlPanel(p: Props) {
                   )}
                 </>
               )}
-              {(p.mode === "chat" || p.mode === "voice" || p.mode === "tutor" || p.mode === "docs") && (
+              {(p.mode === "chat" || p.mode === "voice" || p.mode === "docs") && (
                 <button
                   className={`mic-btn ${p.recording ? "rec" : ""}`}
-                  onClick={p.mode === "tutor" ? p.onTutorRecord : p.onMicToggle}
+                  onClick={p.onMicToggle}
                   title={
-                    p.mode === "tutor"
-                      ? "record and score"
-                      : p.mode === "voice"
+                    p.mode === "voice"
                         ? "speak instead of typing"
                         : p.mode === "docs"
                           ? "ask document with voice"
@@ -684,35 +660,6 @@ export default function ControlPanel(p: Props) {
             </div>
 
             <div className="ct-right">
-              {p.mode === "read" && (
-                <>
-                  <button
-                    className="tool-btn"
-                    onClick={p.onSummarize}
-                    disabled={p.summarizing || p.text.trim().length < 10}
-                  >
-                    <Sparkles size={13} /> {p.summarizing ? "summarizing…" : "summarize"}
-                  </button>
-                  <button
-                    className="tool-btn"
-                    onClick={p.onReadAloud}
-                    disabled={p.reading || !p.text.trim()}
-                  >
-                    {p.reading
-                      ? `♪ ${p.readProgress ? `${p.readProgress.i}/${p.readProgress.n}` : "…"}`
-                      : <><Play size={13} /> read aloud</>}
-                  </button>
-                </>
-              )}
-              {p.mode === "tutor" && (
-                <button
-                  className="tool-btn"
-                  onClick={p.onTutorSpeak}
-                  disabled={!p.tutorTarget.trim() || p.busy}
-                >
-                  <Volume2 size={13} /> hear it
-                </button>
-              )}
               <button
                 className="send-btn"
                 onClick={() => fireMain(p)}
@@ -731,32 +678,18 @@ export default function ControlPanel(p: Props) {
           </div>
         </div>
 
-        {p.reading && (
-          <div className="read-bar">
-            <div
-              className="read-fill"
-              style={{
-                width: p.readProgress ? `${(p.readProgress.i / p.readProgress.n) * 100}%` : "10%",
-              }}
-            />
-          </div>
-        )}
       </div>
     </div>
   );
 }
 
 function composerDisabled(p: Props) {
-  const body = (p.mode === "tutor" ? p.tutorTarget : p.text).trim();
+  const body = p.text.trim();
   switch (p.mode) {
     case "chat":
       return p.chatBusy || !body;
     case "voice":
       return p.busy || !body || p.recording || p.voiceTab === "speak";
-    case "read":
-      return p.reading || !body;
-    case "tutor":
-      return p.tutorChecking || !p.tutorTarget.trim();
     case "docs":
       return p.docsBusy || !p.text.trim();
   }
@@ -769,13 +702,6 @@ function fireMain(p: Props) {
       break;
     case "voice":
       p.onGenerate();
-      break;
-    case "read":
-      p.onReadAloud();
-      break;
-    case "tutor":
-      // recording flow handled by mic button; Enter just plays target
-      p.onTutorSpeak();
       break;
     case "docs":
       p.onDocAsk(p.text.replace(/[ ]+$/, ""));
@@ -844,17 +770,15 @@ function TunePop(p: Props & { speedStyle: CSSProperties; voices: Voice[] }) {
 
 /* ------------------------------------------------------------- intro card */
 function ChatIntro({ p }: { p: Props }) {
-  if (p.msgs.length || p.tutorResult) return null;
+  if (p.msgs.length) return null;
   const copy: Record<Mode, { Icon: typeof MessageSquare; title: string; sub: string }> = {
     chat: {
       Icon: MessageSquare,
       title: "Talk to Kiko",
-      sub: "she answers out loud — flip hands-free for a real conversation",
+      sub: "For everyday questions and hands-free help: chat, use local tools, and hear Kiko speak.",
     },
-    voice: { Icon: Mic, title: "Voice studio", sub: "type it, she says it — 54 voices, 3 accents… your pick" },
-    read: { Icon: BookOpen, title: "Read aloud", sub: "paste a document — she reads it with karaoke subtitles, or summarizes it" },
-    tutor: { Icon: Target, title: "Pronunciation tutor", sub: "she says the line, you repeat it — whisper scores every word" },
-    docs: { Icon: Paperclip, title: "Ask the doc", sub: "add a markdown, PDF or Word file — she reads it fully offline and answers from it" },
+    voice: { Icon: Mic, title: "Voice studio", sub: "For creators and presenters: turn a script into local speech, choose a voice, and export the audio." },
+    docs: { Icon: Paperclip, title: "Ask your files", sub: "For students and researchers: upload a PDF, Word, or text file and get answers grounded in its contents." },
   };
   const c = copy[p.mode];
   return (

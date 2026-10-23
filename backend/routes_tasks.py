@@ -1,4 +1,4 @@
-"""Task routes: summarize / rewrite / tutor score."""
+"""Task routes: file parsing, summarization, and rewriting."""
 
 import logging
 
@@ -7,8 +7,6 @@ from pydantic import BaseModel, Field
 
 import docslib
 import nlp
-import tutor
-from modelmgr import manager
 
 log = logging.getLogger("routes_tasks")
 router = APIRouter()
@@ -38,11 +36,6 @@ class RewriteRequest(BaseModel):
     style: str = Field(default="friendly", max_length=40)
 
 
-class TutorRequest(BaseModel):
-    target: str = Field(min_length=1, max_length=600)
-    said: str = Field(default="", max_length=1500)
-
-
 @router.post("/api/summarize")
 def summarize(req: SummarizeRequest):
     if not __import__("llm").is_available():
@@ -62,10 +55,3 @@ def rewrite(req: RewriteRequest):
         return nlp.rewrite(req.text, req.style)
     except Exception as e:
         raise HTTPException(500, f"LLM error: {e}")
-
-
-@router.post("/api/tutor/score")
-def tutor_score(req: TutorRequest):
-    result = tutor.score(req.target, req.said)
-    result["message"] = tutor.encouragement(result["score"])
-    return result

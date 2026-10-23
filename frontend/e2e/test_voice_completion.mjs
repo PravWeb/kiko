@@ -1,8 +1,10 @@
 import { chromium } from "playwright";
 import path from "path";
+import fs from "fs";
 
-const URL = "http://127.0.0.1:8000/";
-const SHOT_DIR = "/home/thepraveeneffect/.gemini/antigravity/brain/b5e22d6c-113c-4fe5-a8c0-fad2494a8d8a";
+const URL = process.env.KIKO_URL || "http://127.0.0.1:8000/";
+const SHOT_DIR = process.env.KIKO_TEST_OUTPUT_DIR || "/tmp/kiko-e2e";
+fs.mkdirSync(SHOT_DIR, { recursive: true });
 
 const browser = await chromium.launch({
   headless: true,

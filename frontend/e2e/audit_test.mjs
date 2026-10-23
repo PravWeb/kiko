@@ -46,25 +46,10 @@ await switchMode("Voice");
 await page.screenshot({ path: `${SHOT_DIR}/02_mode_voice_studio.png` });
 console.log("2. Captured Voice Studio mode");
 
-// 3. Visit Read Aloud mode
-await switchMode("Read");
-await page.screenshot({ path: `${SHOT_DIR}/03_mode_read_aloud.png` });
-console.log("3. Captured Read Aloud mode");
-
-// 4. Visit Tutor mode
-await switchMode("Tutor");
-await page.screenshot({ path: `${SHOT_DIR}/04_mode_tutor.png` });
-console.log("4. Captured Tutor mode");
-
-// 5. Visit Translate mode
-await switchMode("Translate");
-await page.screenshot({ path: `${SHOT_DIR}/05_mode_translate.png` });
-console.log("5. Captured Translate mode");
-
-// 6. Visit Docs mode
+// 3. Visit Docs mode
 await switchMode("Docs");
-await page.screenshot({ path: `${SHOT_DIR}/06_mode_docs.png` });
-console.log("6. Captured Docs mode");
+await page.screenshot({ path: `${SHOT_DIR}/03_mode_docs.png` });
+console.log("3. Captured Docs mode");
 
 // Check console errors
 console.log("Total console messages:", consoleLogs.length);

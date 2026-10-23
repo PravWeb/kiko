@@ -3,6 +3,7 @@
 import logging
 import os
 import threading
+from contextlib import AsyncExitStack
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -18,6 +19,7 @@ from routes_docs import router as docs_router
 from routes_tasks import router as tasks_router
 from routes_voice import router as voice_router
 from routes_voicews import router as voicews_router
+from kiko_mcp import mcp as kiko_mcp
 
 log = logging.getLogger("kiko")
 APP_NAME = "Kiko"
@@ -44,8 +46,12 @@ def _register_engines() -> None:
 async def lifespan(_: FastAPI):
     _register_engines()
     manager.start_sweeper()
-    yield
-    manager.stop()
+    try:
+        async with AsyncExitStack() as stack:
+            await stack.enter_async_context(kiko_mcp.session_manager.run())
+            yield
+    finally:
+        manager.stop()
 
 
 app = FastAPI(title=APP_NAME, lifespan=lifespan)
@@ -61,6 +67,26 @@ app.include_router(docs_router)
 app.include_router(voice_router)
 app.include_router(agent_router)
 app.include_router(tasks_router)
+
+# Kiko exposes its local voice, document-search, runtime, and project tools at /mcp.
+app.mount(
+    "/mcp",
+    kiko_mcp.streamable_http_app(
+        streamable_http_path="/", json_response=True, stateless_http=True,
+        host="127.0.0.1",
+    ),
+    name="kiko-mcp",
+)
+
+
+@app.middleware("http")
+async def normalize_mcp_root(request, call_next):
+    # A mounted ASGI app normally sees an empty path for its root when the
+    # client omits the trailing slash. Keep the advertised /mcp URL canonical.
+    if request.scope.get("path") == "/mcp":
+        request.scope["path"] = "/mcp/"
+        request.scope["raw_path"] = b"/mcp/"
+    return await call_next(request)
 
 static_dir = os.path.join(os.path.dirname(__file__), "..", "frontend", "out")
 if os.path.isdir(static_dir):

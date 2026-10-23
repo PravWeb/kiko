@@ -2,8 +2,10 @@ import { chromium } from "playwright";
 import fs from "fs";
 import path from "path";
 
-const URL = "http://127.0.0.1:8000/";
-const SHOT_DIR = "/home/thepraveeneffect/.gemini/antigravity/brain/b5e22d6c-113c-4fe5-a8c0-fad2494a8d8a";
+const URL = process.env.KIKO_URL || "http://127.0.0.1:8000/";
+const SHOT_DIR = process.env.KIKO_TEST_OUTPUT_DIR || "/tmp/kiko-hackathon-e2e";
+fs.mkdirSync(SHOT_DIR, { recursive: true });
+const TEST_MEMORY_KEY = `hackathon_test_${Date.now()}`;
 const logEvents = [];
 
 const browser = await chromium.launch({
@@ -50,7 +52,7 @@ await page.waitForTimeout(800);
 // Add a test fact
 const keyInput = page.locator(".memory-input").first();
 const valInput = page.locator(".memory-input.val");
-await keyInput.fill("hackathon_award");
+await keyInput.fill(TEST_MEMORY_KEY);
 await valInput.fill("1st Place Winner");
 await page.locator(".memory-add-btn").click();
 await page.waitForTimeout(1000);
@@ -100,6 +102,7 @@ for (let i = 0; i < 50; i++) {
 }
 
 console.log("Kiko Memory-Informed Reply:", lastReply);
+await page.request.delete(`${new globalThis.URL(URL).origin}/api/memory/${encodeURIComponent(TEST_MEMORY_KEY)}`).catch(() => {});
 
 // Verify MP3 download button
 const saveBtn = page.locator(".bubble-msg.ai .mini a");
@@ -128,36 +131,11 @@ console.log("Voice Studio 'load script' button present:", await loadScriptBtn.co
 await page.screenshot({ path: path.join(SHOT_DIR, "hackathon_04_voice_studio.png"), fullPage: false });
 console.log("Saved screenshot: hackathon_04_voice_studio.png");
 
-// 6. Test Read Aloud Mode with Import File
-await switchMode("Read");
-const importFileBtn = page.locator(".ct-left.ct-mic-wrap label:has-text('import file')");
-console.log("Read Aloud 'import file' button present:", await importFileBtn.count() > 0);
-
-// Test uploading a document into Read Aloud
-const sampleDocPath = "/tmp/hackathon_speech.txt";
-fs.writeFileSync(sampleDocPath, "Kiko is an offline, privacy-first local AI companion built for high performance on consumer hardware.");
-const fileChooserPromise = page.waitForEvent("filechooser");
-await importFileBtn.click();
-const fileChooser = await fileChooserPromise;
-await fileChooser.setFiles(sampleDocPath);
-await page.waitForTimeout(1500);
-
-const readText = await page.locator(".composer-input").inputValue();
-console.log("Read Aloud loaded text from file:", readText);
-await page.screenshot({ path: path.join(SHOT_DIR, "hackathon_05_read_aloud_upload.png"), fullPage: false });
-console.log("Saved screenshot: hackathon_05_read_aloud_upload.png");
-
-// 7. Test Docs Mode
+// 6. Test Docs Mode
 await switchMode("Docs");
 await page.waitForTimeout(600);
-await page.screenshot({ path: path.join(SHOT_DIR, "hackathon_06_docs_mode.png"), fullPage: false });
-console.log("Saved screenshot: hackathon_06_docs_mode.png");
-
-// 8. Test Tutor Mode
-await switchMode("Tutor");
-await page.waitForTimeout(600);
-await page.screenshot({ path: path.join(SHOT_DIR, "hackathon_07_tutor_mode.png"), fullPage: false });
-console.log("Saved screenshot: hackathon_07_tutor_mode.png");
+await page.screenshot({ path: path.join(SHOT_DIR, "hackathon_05_docs_mode.png"), fullPage: false });
+console.log("Saved screenshot: hackathon_05_docs_mode.png");
 
 console.log("=== ALL E2E VERIFICATIONS SUCCESSFUL ===");
 if (logEvents.length > 0) {

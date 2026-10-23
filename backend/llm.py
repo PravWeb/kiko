@@ -1,8 +1,8 @@
 """Kiko brain core — Qwen3 (GGUF) via llama.cpp, CPU only.
 
 Dual-brain routing:
-  - 'fast' (Qwen3-0.6B): ~23 tok/s, ultra-low latency for real-time live voice & quick turns.
-  - 'smart' (Qwen3-1.7B): ~12-15 tok/s, deep comprehension for Document RAG and complex tasks.
+  - 'fast' (Qwen3-0.6B): smaller resident model for lower-latency live voice and quick turns.
+  - 'smart' (Qwen3-1.7B): larger on-demand model for longer prompts, document RAG, and summarization.
 
 Lazy loading with automatic idle unloading via the model manager.
 """
@@ -28,8 +28,14 @@ LLM_THREADS = int(os.environ.get("LLM_THREADS", "0")) or min(
 )
 
 KIKO_PERSONA = (
-    "You are Kiko — a cheerful, brilliant AI companion living on the user's laptop. "
-    "You are fully offline and proud of it. Be warm, witty, and helpful. "
+    "You are Kiko — a cheerful, helpful AI companion living on the user's laptop. "
+    "Core chat runs locally. Be warm, witty, and helpful. "
+    "Answer the user's actual question first with specific, useful information. "
+    "For clear questions, answer directly instead of asking what they mean. "
+    "Avoid generic filler such as 'I'm here to help' unless it answers the user. "
+    "For casual conversation, respond naturally and briefly; don't turn every reply into an offer. "
+    "Never invent facts. If the user asks for current news or recent developments and web search is available, search before answering. "
+    "If that search is unavailable, say so briefly and separate general background from current facts. "
     "Match the user's language: reply in Hindi if they write Hindi, English if English. "
     "Never mention being a language model; you are Kiko."
 )
@@ -108,11 +114,13 @@ def _unloader(handle) -> None:
     del handle
 
 
-# 1. Fast brain: Qwen3-0.6B (or fallback to 1.7B) - Resident & pre-warmed for instant sub-second turns
+# 1. Fast brain: Qwen3-0.6B (or fallback to 1.7B), resident to avoid repeated model-load delay.
 _fast_path = GGUF_06B if GGUF_06B.exists() else GGUF_17B
+_smart_path = GGUF_17B if GGUF_17B.exists() else GGUF_06B
+_shared_brain = _fast_path == _smart_path
 manager.register(Engine(
     name="llm_fast",
-    loader=lambda: _create_llama(_fast_path, n_ctx=2048),
+    loader=lambda: _create_llama(_fast_path, n_ctx=4096 if _shared_brain else 2048),
     unloader=_unloader,
     resident=True,
     idle_ttl=LLM_IDLE_TTL,
@@ -120,11 +128,11 @@ manager.register(Engine(
 ))
 
 # 2. Smart brain: Qwen3-1.7B (or fallback to 0.6B)
-_smart_path = GGUF_17B if GGUF_17B.exists() else GGUF_06B
 manager.register(Engine(
     name="llm_smart",
-    loader=lambda: _create_llama(_smart_path, n_ctx=4096),
-    unloader=_unloader,
+    loader=(lambda: manager.get("llm_fast")) if _shared_brain
+            else (lambda: _create_llama(_smart_path, n_ctx=4096)),
+    unloader=(lambda _handle: None) if _shared_brain else _unloader,
     resident=False,
     idle_ttl=LLM_IDLE_TTL,
     model_info=f"{_smart_path.name} (llama.cpp, {LLM_THREADS} threads, smart RAG)",

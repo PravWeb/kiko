@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { Status } from "@/lib/api";
+import { getMcpStatus, type McpStatus, type Status } from "@/lib/api";
 
 type Props = {
   status: Status | null;
@@ -10,13 +10,21 @@ type Props = {
 
 export default function EngineBay({ status, onToggle }: Props) {
   const [open, setOpen] = useState(false);
+  const [mcp, setMcp] = useState<McpStatus | null>(null);
+  const [mcpLoaded, setMcpLoaded] = useState(false);
   const mem = status?.memory;
   return (
     <div className="engine-bay">
       <button
         className="chip"
         onClick={() => {
-          setOpen((v) => !v);
+          setOpen((v) => {
+            if (!v && !mcpLoaded) {
+              setMcpLoaded(true);
+              void getMcpStatus().then(setMcp).catch(() => setMcp(null));
+            }
+            return !v;
+          });
           onToggle?.();
         }}
       >
@@ -41,6 +49,13 @@ export default function EngineBay({ status, onToggle }: Props) {
                 </span>
               </div>
             ))}
+          <div className="eb-engine">
+            <span className="eb-name">MCP</span>
+            <span className={`eb-state ${mcp?.server.enabled ? "ok" : ""}`}>
+              {mcp ? (mcp.client.connected ? `${mcp.client.tools.length} remote tools` : mcp.client.configured ? "configured · offline" : "project server ready") : "checking…"}
+            </span>
+            <span className="eb-meta">local endpoint · /mcp</span>
+          </div>
         </div>
       )}
     </div>

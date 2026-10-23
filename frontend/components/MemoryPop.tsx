@@ -40,13 +40,13 @@ export function MemoryPop({ memory, onAdd, onDelete, onClear, onClose }: Props) 
 
       <div className="memory-note">
         <ShieldCheck size={12} className="text-emerald" />
-        <span>Persisted locally in <code>backend/data/memory.json</code>. Kiko remembers these across restarts.</span>
+        <span>Saved in Kiko’s local app data on this device. With tools on, Kiko saves explicit “my name is…” and “remember that…” facts; sensitive details are skipped.</span>
       </div>
 
       <div className="memory-list">
         {entries.length === 0 ? (
           <div className="memory-empty">
-            No memories stored yet. Tell Kiko <i>&quot;My name is...&quot;</i> or <i>&quot;Remember that I like Python&quot;</i>, or add a fact below.
+            No memories stored yet. Say <i>&quot;My name is…&quot;</i> or <i>&quot;Remember that I like Python&quot;</i>, or add a fact below.
           </div>
         ) : (
           entries.map(([k, v]) => (

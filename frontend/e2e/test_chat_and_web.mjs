@@ -1,4 +1,12 @@
 import { chromium } from "playwright";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const URL = process.env.KIKO_URL || "http://127.0.0.1:8000/";
+const SHOT_DIR = process.env.KIKO_TEST_OUTPUT_DIR || "/tmp/kiko-e2e";
+const README_FILE = fileURLToPath(new globalThis.URL("../../README.md", import.meta.url));
+fs.mkdirSync(SHOT_DIR, { recursive: true });
 
 async function run() {
   console.log("Starting full E2E test for Chat, Web Search, Fast/Smart brain, and Docs streaming...");
@@ -13,8 +21,8 @@ async function run() {
   });
   page.on("pageerror", (err) => console.error("[Browser Error]:", err));
 
-  console.log("Loading Kiko UI at http://127.0.0.1:8000/ ...");
-  await page.goto("http://127.0.0.1:8000/", { waitUntil: "networkidle" });
+  console.log("Loading Kiko UI at", URL);
+  await page.goto(URL, { waitUntil: "networkidle" });
   await page.waitForTimeout(1000);
 
   // 1. Initial Layout verification
@@ -93,7 +101,7 @@ async function run() {
 
   await sendChatMessage("who won 2024 t20 world cup", "Turn 2: Web Search");
 
-  const shot1 = "/home/thepraveeneffect/.gemini/antigravity/brain/b5e22d6c-113c-4fe5-a8c0-fad2494a8d8a/artifact_chat_websearch.png";
+  const shot1 = path.join(SHOT_DIR, "artifact_chat_websearch.png");
   await page.screenshot({ path: shot1 });
   console.log(`Saved chat + web search screenshot to ${shot1}`);
 
@@ -114,14 +122,14 @@ async function run() {
     const fileChooserPromise = page.waitForEvent("filechooser");
     await page.locator("label.tool-btn:has-text('file')").click();
     const fileChooser = await fileChooserPromise;
-    await fileChooser.setFiles("/home/thepraveeneffect/local-voice-ai/README.md");
+    await fileChooser.setFiles(README_FILE);
     await page.waitForTimeout(2000);
   }
 
   // Ask question about uploaded document
   await sendChatMessage("What models does Kiko use?", "Turn 3: Doc RAG");
 
-  const shot2 = "/home/thepraveeneffect/.gemini/antigravity/brain/b5e22d6c-113c-4fe5-a8c0-fad2494a8d8a/artifact_docs_streaming.png";
+  const shot2 = path.join(SHOT_DIR, "artifact_docs_streaming.png");
   await page.screenshot({ path: shot2 });
   console.log(`Saved docs streaming screenshot to ${shot2}`);
 

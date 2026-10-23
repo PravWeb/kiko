@@ -33,6 +33,11 @@ export type Status = {
   memory?: { engines: Record<string, EngineStatus>; rss_mb: number | null };
 };
 
+export type McpStatus = {
+  server: { enabled: boolean; endpoint: string; tools: string[] };
+  client: { configured: boolean; connected: boolean; tools: { name: string; description: string }[] };
+};
+
 export type SttResult = {
   text: string;
   language: string;
@@ -50,6 +55,7 @@ export type ChatResult = {
   reply: string;
   emotion: string;
   tool_calls: ToolCall[];
+  active_skills?: string[];
   elapsed_s: number;
 };
 
@@ -59,14 +65,6 @@ export type TimerEntry = {
   seconds: number;
   remaining_s: number;
   fired: boolean;
-};
-
-export type TutorWord = { word: string; ok: boolean };
-export type TutorResult = {
-  score: number;
-  words: TutorWord[];
-  said: string;
-  message: string;
 };
 
 export type Effect =
@@ -100,6 +98,10 @@ function post<T>(path: string, body: unknown): Promise<T> {
 
 export async function getStatus(): Promise<Status> {
   return json<Status>(await fetch(`${API}/api/status`));
+}
+
+export async function getMcpStatus(): Promise<McpStatus> {
+  return json<McpStatus>(await fetch(`${API}/api/mcp`));
 }
 
 export async function getVoices(): Promise<{
@@ -210,13 +212,23 @@ export type ChatStreamFinal = {
   reply: string;
   emotion: string;
   tool_calls: ChatResult["tool_calls"];
+  active_skills?: string[];
   elapsed_s: number;
+};
+
+export type StreamStatus = {
+  type?: "status";
+  phase?: "web_search" | "web_search_done" | string;
+  status?: string;
+  query?: string;
+  count?: number;
 };
 
 async function sseStream(
   path: string,
   payload: unknown,
-  onDelta: (t: string) => void
+  onDelta: (t: string) => void,
+  onStatus?: (status: StreamStatus) => void
 ): Promise<ChatStreamFinal> {
   const res = await fetch(`${API}${path}`, {
     method: "POST",
@@ -247,6 +259,8 @@ async function sseStream(
       const ev = JSON.parse(line.slice(6));
       if (ev.type === "delta") {
         onDelta(ev.t as string);
+      } else if (ev.type === "status") {
+        onStatus?.(ev as StreamStatus);
       } else if (ev.type === "error") {
         throw new Error(ev.message as string);
       } else if (ev.type === "final") {
@@ -267,9 +281,10 @@ export function chatStream(
     lang?: "en" | "hi";
     brain?: "fast" | "smart";
   },
-  onDelta: (t: string) => void
+  onDelta: (t: string) => void,
+  onStatus?: (s: StreamStatus) => void
 ): Promise<ChatStreamFinal> {
-  return sseStream("/api/chat/stream", opts, onDelta);
+  return sseStream("/api/chat/stream", opts, onDelta, onStatus);
 }
 
 export function docsAskStream(
@@ -278,12 +293,14 @@ export function docsAskStream(
   history: { who: "user" | "kiko"; text: string }[] = [],
   onDelta: (t: string) => void,
   brain: "smart" | "fast" = "smart",
-  websearch_enabled: boolean = false
+  websearch_enabled: boolean = false,
+  onStatus?: (s: StreamStatus) => void
 ): Promise<ChatStreamFinal> {
   return sseStream(
     "/api/docs/ask/stream",
     { question: q, doc_id: docId, history, brain, websearch_enabled },
-    onDelta
+    onDelta,
+    onStatus
   );
 }
 
@@ -317,13 +334,6 @@ export async function rewriteRequest(
   style: string
 ): Promise<{ text: string }> {
   return post("/api/rewrite", { text, style });
-}
-
-export async function tutorScoreRequest(
-  target: string,
-  said: string
-): Promise<TutorResult> {
-  return post<TutorResult>("/api/tutor/score", { target, said });
 }
 
 export async function getTimers(): Promise<{

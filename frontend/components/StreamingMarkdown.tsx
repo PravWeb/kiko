@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useState, useCallback, useMemo } from "react";
-import { Copy, Check, Terminal, FileCode } from "lucide-react";
+import React, { useState, useCallback, useMemo, useEffect, useRef } from "react";
+import { Copy, Check, Terminal, FileCode, GitFork, Eye, Code } from "lucide-react";
+import mermaid from "mermaid";
 
 interface Props {
   content: string;
@@ -48,6 +49,98 @@ function CodeBlock({ code, lang }: { code: string; lang: string }) {
       <pre className="md-code-pre">
         <code>{code}</code>
       </pre>
+    </div>
+  );
+}
+
+function MermaidBlock({ code }: { code: string }) {
+  const [svg, setSvg] = useState<string>("");
+  const [error, setError] = useState<string | null>(null);
+  const [showCode, setShowCode] = useState(false);
+  const idRef = useRef(`mermaid-${Math.random().toString(36).slice(2, 9)}`);
+
+  useEffect(() => {
+    let isMounted = true;
+    try {
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: "dark",
+        themeVariables: {
+          darkMode: true,
+          background: "transparent",
+          primaryColor: "#7c3aed",
+          primaryTextColor: "#f8fafc",
+          primaryBorderColor: "#a855f7",
+          lineColor: "#38bdf8",
+          secondaryColor: "#1e1b4b",
+          tertiaryColor: "#0f172a",
+          fontSize: "13px",
+        },
+        securityLevel: "loose",
+      });
+
+      mermaid
+        .render(idRef.current, code)
+        .then(({ svg }) => {
+          if (isMounted) {
+            setSvg(svg);
+            setError(null);
+          }
+        })
+        .catch((err) => {
+          if (isMounted) {
+            setError(err instanceof Error ? err.message : String(err));
+          }
+        });
+    } catch (e: unknown) {
+      if (isMounted) setError(e instanceof Error ? e.message : String(e));
+    }
+
+    return () => {
+      isMounted = false;
+    };
+  }, [code]);
+
+  if (error || showCode || !svg) {
+    return (
+      <div className="mermaid-box">
+        <div className="mermaid-topbar">
+          <span className="mermaid-tag">
+            <GitFork size={12} className="text-cyan" /> Diagram Source
+          </span>
+          {svg && (
+            <button
+              type="button"
+              className="mermaid-toggle-btn"
+              onClick={() => setShowCode(false)}
+            >
+              <Eye size={11} /> view diagram
+            </button>
+          )}
+        </div>
+        <CodeBlock code={code} lang="mermaid" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="mermaid-box">
+      <div className="mermaid-topbar">
+        <span className="mermaid-tag">
+          <GitFork size={12} className="text-cyan" /> Architecture Diagram
+        </span>
+        <button
+          type="button"
+          className="mermaid-toggle-btn"
+          onClick={() => setShowCode(true)}
+        >
+          <Code size={11} /> view code
+        </button>
+      </div>
+      <div
+        className="mermaid-render-area"
+        dangerouslySetInnerHTML={{ __html: svg }}
+      />
     </div>
   );
 }
@@ -149,6 +242,10 @@ export function StreamingMarkdown({ content, isStreaming }: Props) {
     <div className="streaming-markdown">
       {blocks.map((block, idx) => {
         if (block.type === "code") {
+          const l = (block.lang || "").toLowerCase().trim();
+          if (l === "mermaid") {
+            return <MermaidBlock key={idx} code={block.code || ""} />;
+          }
           return (
             <CodeBlock
               key={idx}

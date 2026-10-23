@@ -9,11 +9,41 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 import agent
+import skills
 import tools
+import mcp_client
+from kiko_mcp import SERVER_TOOL_NAMES
 from modelmgr import manager
 
 log = logging.getLogger("routes_agent")
 router = APIRouter()
+
+
+def _mcp_command(message: str) -> dict | None:
+    """Give `/mcp` a useful deterministic response instead of asking the LLM."""
+    command = " ".join(message.strip().lower().split())
+    if command not in {"/mcp", "/mcp status"}:
+        return None
+    endpoint = "http://127.0.0.1:8000/mcp"
+    configured = mcp_client.configured_url()
+    connection = (
+        "Kiko chat is connected to this local MCP server by default."
+        if configured.rstrip("/") == endpoint
+        else "Kiko chat is configured to use a custom MCP server."
+    )
+    reply = (
+        f"Kiko's MCP server is available at {endpoint}. It provides local speech generation, "
+        "search over documents uploaded in this running session, model status, skills, and project info. "
+        f"{connection} Connect an external MCP client to the endpoint, or ask me normally to "
+        "search an uploaded document or check model status."
+    )
+    return {
+        "reply": reply,
+        "emotion": "thinking",
+        "tool_calls": [{"tool": "mcp_status", "args": {}, "result": {"endpoint": endpoint}}],
+        "active_skills": [],
+        "elapsed_s": 0.0,
+    }
 
 
 class ChatTurn(BaseModel):
@@ -27,7 +57,7 @@ class ChatRequest(BaseModel):
     tools_enabled: bool = True
     websearch_enabled: bool = False
     lang: Literal["en", "hi"] = "en"
-    brain: str = "fast"
+    brain: str = "smart"
 
 
 class SearchRequest(BaseModel):
@@ -40,8 +70,35 @@ def search_web_api(req: SearchRequest):
     return tools.web_search({"query": req.query})
 
 
+@router.get("/api/skills")
+def list_local_skills():
+    """List installed, local SKILL.md workflows without exposing their prompt text."""
+    return {"skills": skills.list_skills()}
+
+
+@router.get("/api/mcp")
+def mcp_status():
+    """Discover Kiko's MCP endpoint and optional configured remote tools."""
+    remote = mcp_client.available_tools()
+    return {
+        "server": {
+            "enabled": True,
+            "endpoint": "/mcp",
+            "tools": list(SERVER_TOOL_NAMES),
+        },
+        "client": {
+            "configured": bool(mcp_client.configured_url()),
+            "connected": bool(remote),
+            "tools": [{"name": t["name"], "description": t["description"]} for t in remote],
+        },
+    }
+
+
 @router.post("/api/chat")
 def chat(req: ChatRequest):
+    command = _mcp_command(req.message)
+    if command:
+        return command
     if not __import__("llm").is_available():
         raise HTTPException(503, "LLM weights missing (Qwen3-1.7B/0.6B GGUF)")
     history = [{"who": h.who, "text": h.text} for h in req.history]
@@ -60,9 +117,14 @@ def chat(req: ChatRequest):
 @router.post("/api/chat/stream")
 def chat_stream(req: ChatRequest):
     """Token-streamed text chat (SSE)."""
+    command = _mcp_command(req.message)
 
     def sse():
         try:
+            if command:
+                yield f"data: {json.dumps({'type': 'delta', 't': command['reply']}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'final', **command}, ensure_ascii=False)}\n\n"
+                return
             for ev in agent.chat_stream(req.message,
                                         [{"who": h.who, "text": h.text}
                                          for h in req.history],

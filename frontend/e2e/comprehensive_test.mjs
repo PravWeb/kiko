@@ -1,8 +1,11 @@
 import { chromium } from "playwright";
 import fs from "fs";
+import { fileURLToPath } from "url";
 
-const URL = "http://127.0.0.1:8000/";
-const SHOT_DIR = "/home/thepraveeneffect/.gemini/antigravity/brain/b5e22d6c-113c-4fe5-a8c0-fad2494a8d8a";
+const URL = process.env.KIKO_URL || "http://127.0.0.1:8000/";
+const SHOT_DIR = process.env.KIKO_TEST_OUTPUT_DIR || "/tmp/kiko-e2e";
+const README_FILE = fileURLToPath(new globalThis.URL("../../README.md", import.meta.url));
+fs.mkdirSync(SHOT_DIR, { recursive: true });
 const logEvents = [];
 
 const browser = await chromium.launch({
@@ -59,7 +62,7 @@ await page.waitForTimeout(500);
 // Upload demo-project.md
 const fileInput = page.locator('input[type="file"]');
 if (await fileInput.count() > 0) {
-  await fileInput.setInputFiles("/tmp/opencode/kiko-e2e/demo-project.md");
+await fileInput.setInputFiles(README_FILE);
   await page.waitForTimeout(2000);
   console.log("Uploaded file. Doc chips count:", await page.locator(".doc-chip").count());
   // Ask a question in docs mode

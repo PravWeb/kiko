@@ -95,18 +95,10 @@
 .pselect-item:hover { background: rgba(255,255,255,0.06); color: var(--ink); }
 .pselect-item.on { color: var(--accent); }
 .pselect-item.on::after { content: "✓"; margin-left: auto; font-size: 11px; }
+.pselect-item-copy { display: flex; flex-direction: column; gap: 2px; }
+.pselect-item-copy small { color: var(--ink-dim); font-size: 10px; font-weight: 400; }
 
 .head-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
-
-.brain-dot {
-  font-size: 10px;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  font-family: var(--font-geist-mono), monospace;
-  color: var(--ink-faint);
-}
-.brain-dot.ok { color: var(--green); }
-.brain-dot.load { color: var(--amber); animation: pulse 1.2s infinite; }
 
 .icon-btn {
   width: 30px;
@@ -566,6 +558,39 @@ input[type="range"]::-moz-range-thumb {
 .memory-trigger-wrap {
   position: relative;
 }
+.sessions-trigger-wrap { position: relative; }
+.sessions-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 350px;
+  max-width: 90vw;
+  max-height: min(65vh, 520px);
+  overflow: hidden;
+  background: rgba(16, 18, 32, 0.97);
+  border: 1px solid rgba(0, 220, 200, 0.24);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  border-radius: var(--r-md);
+  padding: 12px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  backdrop-filter: blur(12px);
+}
+.sessions-pop-title { display:flex; align-items:center; gap:7px; color:var(--ink); font-size:12px; font-weight:600; }
+.sessions-pop-title span { margin-left:auto; color:var(--ink-dim); font:10px var(--font-geist-mono),monospace; }
+.sessions-list { overflow-y:auto; display:flex; flex-direction:column; gap:4px; }
+.session-row { display:flex; align-items:center; border-radius:8px; }
+.session-row.current { background:rgba(0,220,200,.08); }
+.session-select { flex:1; min-width:0; display:flex; align-items:center; gap:8px; padding:8px; color:var(--ink-dim); background:transparent; border:0; text-align:left; cursor:pointer; }
+.session-select > svg { flex:none; color:var(--cyan); }
+.session-copy { min-width:0; display:flex; flex-direction:column; gap:3px; }
+.session-copy b { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink); font-size:11px; font-weight:500; }
+.session-copy small { color:var(--ink-dim); font-size:9px; }
+.session-delete { border:0; background:transparent; color:var(--ink-dim); padding:7px; cursor:pointer; }
+.session-delete:hover { color:#ff6b8a; }
+.session-footnote,.session-empty { margin:0; color:var(--ink-dim); font-size:10px; }
 .memory-count-dot {
   display: inline-flex;
   align-items: center;

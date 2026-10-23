@@ -1,8 +1,9 @@
 import { chromium } from "playwright";
 import fs from "fs";
 
-const URL = "http://127.0.0.1:8177/";
-const OUT = "/tmp/opencode/kiko-e2e";
+const URL = process.env.KIKO_URL || "http://127.0.0.1:8000/";
+const OUT = process.env.KIKO_TEST_OUTPUT_DIR || "/tmp/kiko-e2e";
+fs.mkdirSync(OUT, { recursive: true });
 const errors = [];
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1440, height: 960 } });
@@ -29,7 +30,7 @@ async function typeText(text) {
 }
 
 // open every mode from the dropdown, screenshot
-for (const label of ["Chat", "Voice", "Read", "Tutor", "Translate"]) {
+for (const label of ["Chat", "Voice", "Docs"]) {
   await setMode(label);
   await shot(`mode-${label.toLowerCase()}`);
 }
@@ -67,27 +68,6 @@ await shot("tune-pop");
 const select = await page.locator(".voice-select option").count();
 console.log("voice options in dropdown:", select);
 await page.keyboard.press("Escape");
-
-// ---- translate
-await setMode("Translate");
-await typeText("Good morning judges, nice to meet you all.");
-await page.locator(".send-btn").click();
-await page.waitForTimeout(15000);
-await shot("translate-result");
-const tres = await page.locator(".tr-text").first().innerText().catch(() => "");
-console.log("translate result:", tres.slice(0, 90));
-
-// ---- read
-await setMode("Read");
-await typeText("Kiko is a fully offline voice companion running on CPU. No cloud, no keys, no internet.");
-const rb = page.locator(".tool-btn", { hasText: "read aloud" }).first();
-await rb.click();
-await page.waitForTimeout(5000);
-await shot("read-aloud");
-
-// ---- tutor
-await setMode("Tutor");
-await shot("tutor-mode");
 
 await browser.close();
 fs.writeFileSync(`${OUT}/console-errors.txt`, errors.join("\n") || "NO ERRORS");

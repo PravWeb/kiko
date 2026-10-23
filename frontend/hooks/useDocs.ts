@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   docsAskStream, docsDelete, docsList, docsSummarizeStream, docsUpload,
   speakRequest, transcribeRequest,
@@ -8,6 +8,7 @@ import {
 } from "@/lib/api";
 import type { Msg } from "@/components/ControlPanel";
 import { cleanForSpeech } from "@/lib/speechClean";
+import { nextMessageId } from "@/lib/messageIds";
 
 const emoRe = /\[emotion:\w+\]|\[emotion[^[\]]*$/gi;
 
@@ -33,7 +34,6 @@ export function useDocs({
   const [busy, setBusy] = useState(false);
   const [webSearchOn, setWebSearchOn] = useState(false);
   const [brain, setBrain] = useState<"fast" | "smart">("smart");
-  const idRef = useRef(0);
   const msgsRef = useRef(msgs);
   msgsRef.current = msgs;
 
@@ -44,6 +44,8 @@ export function useDocs({
       setActiveDocId((cur) => cur ?? docs[0]?.id ?? null);
     } catch {}
   }, []);
+
+  useEffect(() => { void refresh(); }, [refresh]);
 
   const upload = useCallback(
     async (file: File) => {
@@ -71,13 +73,21 @@ export function useDocs({
         return;
       }
       setBusy(true);
-      const userId = ++idRef.current;
-      const kikoId = ++idRef.current;
+      const userId = nextMessageId();
+      const kikoId = nextMessageId();
       const userText = speakOut ? `🎙 ${q}` : q;
+      const initialSearching = !!webSearchOn;
       setMsgs((m) => [
         ...m,
         { id: userId, role: "user", text: userText },
-        { id: kikoId, role: "ai", text: "", toolLabel: webSearchOn ? "web + doc" : "doc" },
+        {
+          id: kikoId,
+          role: "ai",
+          text: "",
+          isSearchingWeb: initialSearching,
+          toolLabel: initialSearching ? "searching web…" : "doc",
+          statusText: initialSearching ? "Searching the web… 🌐" : undefined,
+        },
       ]);
       const acc = { raw: "" };
       try {
@@ -94,18 +104,54 @@ export function useDocs({
             acc.raw += t;
             const shown = acc.raw.replace(emoRe, " ").trimStart();
             setMsgs((m) =>
-              m.map((x) => (x.id === kikoId ? { ...x, text: shown } : x))
+              m.map((x) => (x.id === kikoId ? { ...x, text: shown, isSearchingWeb: false } : x))
             );
           },
           brain,
-          webSearchOn
+          webSearchOn,
+          (status) => {
+            if (status.phase === "web_search") {
+              setMsgs((m) =>
+                m.map((x) =>
+                  x.id === kikoId
+                    ? {
+                        ...x,
+                        isSearchingWeb: true,
+                        toolLabel: "searching web…",
+                        statusText: status.status || "Searching the web… 🌐",
+                      }
+                    : x
+                )
+              );
+            } else if (status.phase === "web_search_done") {
+              setMsgs((m) =>
+                m.map((x) =>
+                  x.id === kikoId
+                    ? {
+                        ...x,
+                        isSearchingWeb: false,
+                        toolLabel: "web + doc",
+                        statusText: undefined,
+                      }
+                    : x
+                )
+              );
+            }
+          }
         );
         const replyText = res.reply;
         const toolLabel = webSearchOn ? "web + doc" : "doc";
         setMsgs((m) =>
           m.map((x) =>
             x.id === kikoId
-              ? { ...x, text: replyText, emotion: res.emotion, toolLabel }
+              ? {
+                  ...x,
+                  text: replyText,
+                  emotion: res.emotion,
+                  toolLabel,
+                  isSearchingWeb: false,
+                  statusText: undefined,
+                }
               : x
           )
         );
@@ -164,8 +210,8 @@ export function useDocs({
     if (!activeDocId || busy) return;
     const doc = docList.find((d) => d.id === activeDocId);
     setBusy(true);
-    const userId = ++idRef.current;
-    const kikoId = ++idRef.current;
+    const userId = nextMessageId();
+    const kikoId = nextMessageId();
     setMsgs((m) => [
       ...m,
       { id: userId, role: "user", text: `✦ summarize ${doc?.name ?? "file"}` },
@@ -200,19 +246,19 @@ export function useDocs({
   }, [activeDocId, busy, docList, setMsgs, toast, brain]);
 
   const del = useCallback(async (id: string) => {
-    await docsDelete(id);
-    setDocList((m) => {
-      const next = m.filter((d) => d.id !== id);
-      setActiveDocId(
-        (cur) => (cur === id ? next[0]?.id ?? null : cur),
-      );
-      return next;
-    });
-  }, []);
+    try {
+      await docsDelete(id);
+      setDocList((m) => {
+        const next = m.filter((d) => d.id !== id);
+        setActiveDocId((cur) => (cur === id ? next[0]?.id ?? null : cur));
+        return next;
+      });
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "document delete failed");
+    }
+  }, [toast]);
 
   const select = useCallback((id: string) => setActiveDocId(id), []);
-
-  void refresh;
 
   return {
     docList,
