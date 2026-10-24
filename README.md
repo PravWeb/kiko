@@ -93,9 +93,21 @@ The 1.7B model provides the Smart brain for text chat and document questions. Th
 ## Configuration and useful endpoints
 
 - `KIKO_MCP_URL` configures a trusted Streamable HTTP MCP server for the chat agent. By default, it points to Kiko's own local endpoint.
-- `HF_HOME` controls the local Hugging Face model cache. The launchers set a project-local cache where appropriate.
+- `HF_HOME` controls the local Hugging Face model cache. The launchers set a project-local cache where appropriate. When Whisper weights are already cached, the backend sets `HF_HUB_OFFLINE=1` automatically so speech recognition never blocks on the network (`backend/offline_bootstrap.py`).
+- `SLOW_REQUEST_MS` (default `3000`) — API calls slower than this are logged with method and path for latency triage.
+- `GET /api/health` — cheap liveness probe. Returns `200` when both voice engines are ready, `202` while they are still warming; never touches model handles.
+- `GET /api/status` — full engine state, including per-engine `loading` flags, a top-level `ready` flag, and `loading_engines`.
+- Every `/api/*` response carries an `X-Response-Time-Ms` header. TTS adds `X-Synthesis-Ms`; STT responses include `transcribe_ms`.
 - `GET /api/mcp` reports MCP client status.
 - `GET /api/skills` lists local skill metadata.
+
+## Troubleshooting
+
+- **The footer keeps saying "warming up the voice engines".** The STT or TTS model is still loading. On a first run Whisper downloads once, then loads from `.hf-cache/` offline. If it hangs, stop the server, confirm `.hf-cache/hub/models--Systran--faster-whisper-small/` contains `model.bin`, and restart.
+- **First chat answer is slow, later ones are fast.** The Smart brain (1.7B) loads on first use and is kept resident afterwards. Warm it early by sending a short message, or set `LLM_SMART_RESIDENT=0` to trade memory for lazy loading.
+- **Mic or send is greyed out.** Voice engines are still warming; the tooltip shows which one. Controls re-enable automatically once `/api/status` reports both ready.
+- **Port 8000 already in use.** Another Kiko instance is running — close it or run `restart.bat`.
+- **UI changes are not visible.** The backend serves `frontend/out/`. Rebuild with `npm.cmd --prefix frontend run build` (or run `restart.bat`).
 
 ## Repository layout
 
