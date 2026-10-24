@@ -5,6 +5,7 @@ import offline_bootstrap  # noqa: F401  — must run before model imports
 import logging
 import os
 import threading
+import time
 from contextlib import AsyncExitStack
 from contextlib import asynccontextmanager
 
@@ -25,6 +26,8 @@ from kiko_mcp import mcp as kiko_mcp
 
 log = logging.getLogger("kiko")
 APP_NAME = "Kiko"
+# API calls slower than this are logged so latency regressions are easy to spot.
+SLOW_REQUEST_MS = float(os.environ.get("SLOW_REQUEST_MS", "3000"))
 
 
 def _register_engines() -> None:
@@ -91,9 +94,20 @@ async def normalize_mcp_root(request, call_next):
     if request.scope.get("path") == "/mcp":
         request.scope["path"] = "/mcp/"
         request.scope["raw_path"] = b"/mcp/"
+    started = time.perf_counter()
     response = await call_next(request)
-    # Ensure browsers don't aggressively cache the static HTML shell during local development
+    elapsed_ms = (time.perf_counter() - started) * 1000.0
     path = request.scope.get("path", "")
+    if path.startswith("/api/"):
+        response.headers["X-Response-Time-Ms"] = f"{elapsed_ms:.1f}"
+        # Surface slow API calls in the server log for latency triage.
+        if elapsed_ms > SLOW_REQUEST_MS and request.method != "GET":
+            log.warning("slow request %s %s took %.0fms",
+                        request.method, path, elapsed_ms)
+        elif elapsed_ms > SLOW_REQUEST_MS:
+            log.info("slow request %s %s took %.0fms",
+                     request.method, path, elapsed_ms)
+    # Ensure browsers don't aggressively cache the static HTML shell during local development
     if path == "/" or path.endswith(".html"):
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"

@@ -118,8 +118,11 @@ def chat(req: ChatRequest):
 def chat_stream(req: ChatRequest):
     """Token-streamed text chat (SSE)."""
     command = _mcp_command(req.message)
+    import time as _time
 
     def sse():
+        t0 = _time.perf_counter()
+        first_logged = False
         try:
             if command:
                 yield f"data: {json.dumps({'type': 'delta', 't': command['reply']}, ensure_ascii=False)}\n\n"
@@ -132,10 +135,18 @@ def chat_stream(req: ChatRequest):
                                         lang=req.lang,
                                         brain=req.brain,
                                         websearch_enabled=req.websearch_enabled):
+                if not first_logged and ev.get("type") == "delta":
+                    first_logged = True
+                    log.info("chat stream first token in %.0fms (brain=%s)",
+                             (_time.perf_counter() - t0) * 1000.0, req.brain)
                 yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
         except Exception as e:
             log.exception("chat stream failed")
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+        finally:
+            if first_logged:
+                log.info("chat stream done in %.0fms",
+                         (_time.perf_counter() - t0) * 1000.0)
 
     return StreamingResponse(sse(), media_type="text/event-stream")
 

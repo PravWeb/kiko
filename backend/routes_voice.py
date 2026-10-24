@@ -106,6 +106,7 @@ def voices():
 def synthesize(req: TTSRequest):
     if not manager.is_ready("tts"):
         raise HTTPException(503, "TTS model still loading, retry in a moment")
+    t0 = time.perf_counter()
     try:
         voice, vfx = (req.voice.split("@", 1) + [""])[:2]
         vfx = {"warm": "pitch_down", "bright": "pitch_up"}.get(vfx, "none")
@@ -121,11 +122,15 @@ def synthesize(req: TTSRequest):
             audio_bytes = fx.apply_effect(audio_bytes, effect, fmt=fmt)
     except ValueError as e:
         raise HTTPException(422, str(e))
+    synth_ms = (time.perf_counter() - t0) * 1000.0
     media_type = "audio/mpeg" if fmt in ("mp3", "mpeg") else "audio/wav"
     return Response(
         audio_bytes,
         media_type=media_type,
-        headers={"X-Audio-Duration": str(duration)},
+        headers={
+            "X-Audio-Duration": str(duration),
+            "X-Synthesis-Ms": f"{synth_ms:.1f}",
+        },
     )
 
 
@@ -141,5 +146,8 @@ async def recognize(audio: UploadFile = File(...),
         data, sr = sf.read(io.BytesIO(raw), dtype="float32")
     except Exception:
         raise HTTPException(422, "Could not decode audio (send WAV/OGG/MP3)")
+    t0 = time.perf_counter()
     with manager.protect("stt"):
-        return stt.transcribe(data, sr, language)
+        result = stt.transcribe(data, sr, language)
+    result["transcribe_ms"] = round((time.perf_counter() - t0) * 1000.0, 1)
+    return result
