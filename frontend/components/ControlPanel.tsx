@@ -100,6 +100,9 @@ type Props = {
   liveState?: "idle" | "listening" | "thinking" | "talking" | "happy" | null;
   timings?: { text: string; start: number; end: number }[];
   activeWord?: number;
+  // engine readiness — mic/send stay disabled while voice engines warm up
+  enginesReady?: boolean;
+  warmingLabel?: string;
 };
 
 const MODES: { id: Mode; Icon: typeof MessageSquare; label: string; purpose: string }[] = [
@@ -664,8 +667,11 @@ export default function ControlPanel(p: Props) {
                 <button
                   className={`mic-btn ${p.recording ? "rec" : ""}`}
                   onClick={p.onMicToggle}
+                  disabled={p.enginesReady === false}
                   title={
-                    p.mode === "voice"
+                    p.enginesReady === false
+                      ? p.warmingLabel || "voice engines warming up…"
+                      : p.mode === "voice"
                         ? "speak instead of typing"
                         : p.mode === "docs"
                           ? "ask document with voice"
@@ -684,13 +690,15 @@ export default function ControlPanel(p: Props) {
               <button
                 className="send-btn"
                 onClick={() => fireMain(p)}
-                disabled={composerDisabled(p)}
+                disabled={composerDisabled(p) || p.enginesReady === false}
                 title={
-                  p.mode === "chat"
-                    ? "send"
-                    : p.mode === "voice"
-                      ? "generate"
-                      : "go"
+                  p.enginesReady === false
+                    ? p.warmingLabel || "voice engines warming up…"
+                    : p.mode === "chat"
+                      ? "send"
+                      : p.mode === "voice"
+                        ? "generate"
+                        : "go"
                 }
               >
                 {p.mode === "chat" ? (p.chatBusy ? "…" : <Send size={15} />) : p.mode === "docs" ? (p.docsBusy ? "…" : <Send size={15} />) : (p.busy ? "…" : <Send size={15} />)}

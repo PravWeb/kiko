@@ -20,6 +20,7 @@ export default function EngineBay({ status, onToggle }: Props) {
   const llmReady = Boolean(status?.llm.ready || status?.llm.available);
   const allReady = Boolean(ttsReady && sttReady && llmReady);
   const isWarming = Boolean(status && !allReady);
+  const loadingNow = status?.loading_engines ?? [];
 
   const statusClass = allReady ? "ok" : isWarming ? "load" : "";
   const statusLabel = allReady
@@ -29,6 +30,9 @@ export default function EngineBay({ status, onToggle }: Props) {
             ? "Voice Engines Warming"
             : "Brain Warming"
         : "Connecting…";
+
+  const badge = (ready: boolean, loading: boolean, readyText: string, loadingText: string) =>
+    ready ? readyText : loading || loadingNow.length > 0 ? loadingText : "Idle";
 
   return (
     <div className="engine-bay">
@@ -67,7 +71,7 @@ export default function EngineBay({ status, onToggle }: Props) {
               <div className="eb-engine-top">
                 <span className="eb-engine-name">Speech (TTS)</span>
                 <span className={`eb-badge-mini ${ttsReady ? "ok" : "load"}`}>
-                  {ttsReady ? "Ready" : "Loading"}
+                  {badge(ttsReady, Boolean(status?.tts.loading), "Ready", "Loading")}
                 </span>
               </div>
               <span className="eb-engine-detail">Kokoro-82M fp16 (ONNX)</span>
@@ -77,7 +81,7 @@ export default function EngineBay({ status, onToggle }: Props) {
               <div className="eb-engine-top">
                 <span className="eb-engine-name">Hearing (STT)</span>
                 <span className={`eb-badge-mini ${sttReady ? "ok" : "load"}`}>
-                  {sttReady ? "Ready" : "Loading"}
+                  {badge(sttReady, Boolean(status?.stt.loading), "Ready", "Loading")}
                 </span>
               </div>
               <span className="eb-engine-detail">faster-whisper small (int8)</span>

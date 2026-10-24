@@ -117,7 +117,6 @@ export default function Home() {
           : !status.tts.ready
               ? "warming up voice engine…"
               : "warming up hearing engine…";
-
   return (
     <>
       <Background />
@@ -225,6 +224,8 @@ export default function Home() {
             onDocDelete={docs.del}
             onSpeakMsg={onSpeakMsg}
             audioLoadingId={audioLoadingId}
+            enginesReady={bothReady}
+            warmingLabel={warming}
           />
         </main>
         {!bothReady && (

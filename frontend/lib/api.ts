@@ -27,10 +27,19 @@ export type EngineStatus = {
 
 export type Status = {
   app?: string;
-  tts: { ready: boolean; model: string };
-  stt: { ready: boolean; model: string };
+  tts: { ready: boolean; loading?: boolean; model: string };
+  stt: { ready: boolean; loading?: boolean; model: string };
   llm: { ready: boolean; available: boolean; model: string };
+  ready?: boolean;
+  loading_engines?: string[];
   memory?: { engines: Record<string, EngineStatus>; rss_mb: number | null };
+};
+
+export type Health = {
+  ok: boolean;
+  ready: boolean;
+  uptime_s: number;
+  engines: Record<string, "ready" | "loading">;
 };
 
 export type McpStatus = {
@@ -98,6 +107,10 @@ function post<T>(path: string, body: unknown): Promise<T> {
 
 export async function getStatus(): Promise<Status> {
   return json<Status>(await fetch(`${API}/api/status`));
+}
+
+export async function getHealth(): Promise<Health> {
+  return json<Health>(await fetch(`${API}/api/health`));
 }
 
 export async function getMcpStatus(): Promise<McpStatus> {
