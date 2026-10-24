@@ -1,3 +1,4 @@
+
 """Optional MCP tool provider. Remote MCP stays disabled unless configured."""
 
 from __future__ import annotations

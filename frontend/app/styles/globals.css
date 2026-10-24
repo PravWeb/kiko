@@ -151,6 +151,8 @@ body {
 
 /* Sleek Navbar Topbar */
 .topbar {
+  position: relative;
+  z-index: 70;
   flex: none;
   display: flex;
   align-items: center;
@@ -406,7 +408,7 @@ body {
   position: fixed;
   bottom: 24px;
   right: 24px;
-  z-index: 60;
+  z-index: 90;
   max-width: 360px;
   padding: 11px 16px;
   border-radius: var(--r-md);

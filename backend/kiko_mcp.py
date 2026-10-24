@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlencode
+from urllib.request import Request, urlopen
 
 import docslib
 import skills
@@ -24,19 +28,24 @@ SERVER_TOOL_NAMES = (
     "search_kiko_project",
     "list_uploaded_documents",
     "search_uploaded_documents",
+    "search_wikipedia",
+    "get_wikipedia_article",
     "get_kiko_runtime_status",
     "generate_kiko_speech",
 )
 
 mcp = MCPServer(
     "Kiko Local Voice AI",
-    version="0.3.0",
+    version="0.4.0",
     instructions=(
         "Kiko is a local-first voice companion. Tools can generate speech with "
         "Kiko's local Kokoro voice engine, search documents uploaded in the "
-        "current Kiko session, and inspect model readiness. Document search only "
-        "accesses Kiko's in-memory uploads. No tool executes shell commands or "
-        "reads arbitrary files."
+        "current Kiko session, look up public Wikipedia articles when internet "
+        "is available, and inspect model readiness. Document search only "
+        "accesses Kiko's in-memory uploads. Wikipedia results are public "
+        "reference material; include their source URL and prefer primary "
+        "sources for high-stakes or rapidly changing facts. No tool executes "
+        "shell commands or reads arbitrary files."
     ),
 )
 
@@ -113,6 +122,93 @@ async def search_uploaded_documents(query: str) -> list[dict[str, str]]:
             source, excerpt = match.group(1), match.group(2)
         results.append({"source": source, "excerpt": excerpt[:900]})
     return results
+
+
+def _wikipedia_json(language: str, path: str, params: dict[str, str] | None = None) -> dict:
+    if language not in {"en", "hi"}:
+        raise ValueError("Wikipedia lookup supports English (en) and Hindi (hi).")
+    query = f"?{urlencode(params)}" if params else ""
+    url = f"https://{language}.wikipedia.org{path}{query}"
+    request = Request(
+        url,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "KikoLocalVoiceCompanion/0.4 (https://github.com/PravWeb/kiko; Wikipedia lookup)",
+        },
+    )
+    with urlopen(request, timeout=6) as response:
+        payload = response.read(1_000_000)
+    data = json.loads(payload.decode("utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("Wikipedia returned an unexpected response.")
+    return data
+
+
+@mcp.tool()
+async def search_wikipedia(query: str, language: str = "en") -> list[dict[str, str]]:
+    """Search public English or Hindi Wikipedia articles for factual background.
+
+    Requires internet. Returns up to five article titles, short excerpts, and
+    source URLs. Search text is sent to Wikipedia.
+    """
+    query = query.strip()[:200]
+    if not query:
+        return []
+    try:
+        data = await asyncio.to_thread(
+            _wikipedia_json, language, "/w/rest.php/v1/search/page",
+            {"q": query, "limit": "5"},
+        )
+    except (HTTPError, URLError, TimeoutError, OSError, ValueError) as exc:
+        return [{"error": f"Wikipedia search unavailable: {str(exc)[:180]}"}]
+    pages = data.get("pages", [])
+    if not isinstance(pages, list):
+        return []
+    results: list[dict[str, str]] = []
+    for page in pages[:5]:
+        if not isinstance(page, dict):
+            continue
+        title = str(page.get("title", "")).strip()
+        key = str(page.get("key", "")).strip()
+        if not title or not key:
+            continue
+        results.append({
+            "title": title[:200],
+            "description": str(page.get("description", ""))[:300],
+            "excerpt": re.sub(r"<[^>]*>", "", str(page.get("excerpt", "")))[:600],
+            "url": f"https://{language}.wikipedia.org/wiki/{quote(key, safe='()_')}",
+        })
+    return results
+
+
+@mcp.tool()
+async def get_wikipedia_article(title: str, language: str = "en") -> dict[str, str]:
+    """Fetch a short public Wikipedia article summary with its source URL.
+
+    Use after search_wikipedia when more context is needed. Requires internet;
+    the article title and language are sent to Wikipedia.
+    """
+    title = " ".join(title.strip().split())[:180]
+    if not title:
+        return {"error": "Provide an article title."}
+    try:
+        data = await asyncio.to_thread(
+            _wikipedia_json, language,
+            f"/api/rest_v1/page/summary/{quote(title.replace(' ', '_'), safe='()_')}",
+        )
+    except (HTTPError, URLError, TimeoutError, OSError, ValueError) as exc:
+        return {"error": f"Wikipedia article unavailable: {str(exc)[:180]}"}
+    extract = str(data.get("extract", "")).strip()
+    if not extract:
+        return {"error": "Wikipedia did not return a summary for that article."}
+    urls = data.get("content_urls", {})
+    desktop = urls.get("desktop", {}) if isinstance(urls, dict) else {}
+    return {
+        "title": str(data.get("title", title))[:200],
+        "summary": extract[:7000],
+        "url": str(desktop.get("page", ""))[:500],
+        "source": "Wikipedia",
+    }
 
 
 @mcp.tool()

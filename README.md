@@ -1,6 +1,6 @@
 # Kiko
 
-**A private, voice-first AI companion that runs on your computer.** Kiko listens, speaks, answers questions, works with your documents, and remembers facts you choose to save. Speech recognition, speech generation, and language models run locally. Optional web search needs an internet connection and sends the search query to DuckDuckGo.
+**A private, voice-first AI companion that runs on your computer.** Kiko listens, speaks, answers questions, works with your documents, and remembers facts you choose to save. Speech recognition, speech generation, and language models run locally. Optional web search and Wikipedia lookups need an internet connection and send their queries to those services.
 
 [Source code](https://github.com/PravWeb/kiko) · [Demo guide](HACKATHON_DEMO.md)
 
@@ -11,8 +11,9 @@
 - **Create voiceovers.** Turn a script into speech, choose a voice and speed, apply an audio effect, and download the result.
 - **Ask questions about documents.** Upload Markdown, PDF, or DOCX files and ask follow-up questions grounded in their contents. Kiko can also summarize a document.
 - **Use built-in tools.** Set timers, do calculations and unit conversions, check the time and date, and save or remove user-approved memories.
+- **Look up reference information.** When tools are enabled and internet is available, Kiko can search English or Hindi Wikipedia and fetch article summaries with source links.
 - **Keep chat history and export it.** Sessions stay in this browser; export a transcript as Markdown or a ZIP containing audio clips.
-- **Connect through MCP.** Kiko provides a local Streamable HTTP MCP endpoint for speech generation, current-session document search, runtime status, skills, and project information.
+- **Connect through MCP.** Kiko provides a local Streamable HTTP MCP endpoint for speech generation, current-session document search, English and Hindi Wikipedia lookups, runtime status, skills, and project information.
 
 ## How it works
 
@@ -26,9 +27,9 @@ Kiko has a Next.js frontend and a FastAPI backend. The backend serves the static
 | Document retrieval | BM25 with PDF and DOCX/Markdown text extraction |
 | API server | FastAPI and Uvicorn |
 | Optional web search | DuckDuckGo via `ddgs`; requires internet |
-| Interoperability | Model Context Protocol (MCP), Streamable HTTP |
+| Interoperability and reference lookup | Model Context Protocol (MCP), Streamable HTTP, Wikimedia REST API |
 
-Kiko does not call hosted Gemini, OpenAI, or other cloud LLM APIs for core chat, speech, or document Q&A. Web search is the optional network feature; its query is sent to DuckDuckGo. Conversations and uploaded files are handled by the local app.
+Kiko does not call hosted Gemini, OpenAI, or other cloud LLM APIs for core chat, speech, or document Q&A. Optional web search sends a query to DuckDuckGo; optional Wikipedia lookups send a search term or article title to Wikipedia. Conversations and uploaded files are handled by the local app.
 
 ## Run Kiko
 
@@ -85,6 +86,7 @@ The 1.7B model provides the Smart brain for text chat and document questions. Th
 - Speech synthesis, speech recognition, chat inference, and document retrieval use local models and run on the machine.
 - Uploaded documents are indexed for use by the running local app. Chat history and saved memories are stored in this browser/local app setup.
 - Optional web search requires internet and sends the search text to DuckDuckGo.
+- Optional Wikipedia lookups require internet and send the search query or article title to Wikipedia. Kiko returns the article link with a summary; use primary sources for high-stakes or rapidly changing facts.
 - First-time dependency and model setup may download packages and model weights.
 - The local MCP endpoint is `http://127.0.0.1:8000/mcp`. Do not expose it to an untrusted network.
 
