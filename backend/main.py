@@ -1,5 +1,7 @@
 """FastAPI server — Kiko, the offline AI voice companion (TTS + STT + agent)."""
 
+import offline_bootstrap  # noqa: F401  — must run before model imports
+
 import logging
 import os
 import threading
@@ -40,6 +42,9 @@ def _register_engines() -> None:
         resident=True,
         model_info=f"faster-whisper {stt.WHISPER_MODEL} (int8, CPU)",
     ))
+    # Prewarm smart brain in the background so the first chat isn't a cold load.
+    if not manager.is_ready("llm_smart"):
+        threading.Thread(target=manager._quiet_load, args=("llm_smart",), daemon=True).start()
 
 
 @asynccontextmanager
@@ -86,7 +91,14 @@ async def normalize_mcp_root(request, call_next):
     if request.scope.get("path") == "/mcp":
         request.scope["path"] = "/mcp/"
         request.scope["raw_path"] = b"/mcp/"
-    return await call_next(request)
+    response = await call_next(request)
+    # Ensure browsers don't aggressively cache the static HTML shell during local development
+    path = request.scope.get("path", "")
+    if path == "/" or path.endswith(".html"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
 
 static_dir = os.path.join(os.path.dirname(__file__), "..", "frontend", "out")
 if os.path.isdir(static_dir):

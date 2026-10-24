@@ -16,7 +16,7 @@ import { useTimers } from "@/hooks/useTimers";
 import { useVoiceStudio } from "@/hooks/useVoiceStudio";
 import { useMemory } from "@/hooks/useMemory";
 import { speakRequest } from "@/lib/api";
-import { cleanForSpeech } from "@/lib/speechClean";
+import { cleanForSpeech, pickVoice } from "@/lib/speechClean";
 import type { Mode } from "@/components/ControlPanel";
 
 export default function Home() {
@@ -78,7 +78,7 @@ export default function Home() {
         const spoken = cleanForSpeech(text);
         const { blob, duration } = await speakRequest({
           text: spoken,
-          voice: voiceStudio.voice,
+          voice: pickVoice(spoken, voiceStudio.voice, chatLang),
           speed: voiceStudio.speed,
         });
         const url = URL.createObjectURL(blob);
@@ -92,7 +92,7 @@ export default function Home() {
         setAudioLoadingId(null);
       }
     },
-    [voiceStudio.voice, voiceStudio.speed, player, session.setMsgs, toast]
+    [voiceStudio.voice, voiceStudio.speed, player, session.setMsgs, toast, chatLang]
   );
 
   const timers = useTimers({
@@ -107,7 +107,16 @@ export default function Home() {
   const [voiceTab, setVoiceTab] = useState<"write" | "speak">("write");
   const [docQuery, setDocQuery] = useState("");
 
-  const bothReady = status?.tts.ready && status?.stt.ready;
+  const bothReady = Boolean(status?.tts.ready && status?.stt.ready);
+  const enginesLoading = Boolean(status && !bothReady);
+  const warming =
+    !status
+      ? "connecting to local engine…"
+      : !status.tts.ready && !status.stt.ready
+          ? "warming up speech + hearing…"
+          : !status.tts.ready
+              ? "warming up voice engine…"
+              : "warming up hearing engine…";
 
   return (
     <>
@@ -220,8 +229,16 @@ export default function Home() {
         </main>
         {!bothReady && (
           <div className="prep-note">
-            warming up the voice engines — <b>first model setup needs internet</b>,
-            then core voice features run locally. Web search is optional.
+            {enginesLoading ? (
+              <>
+                {warming} — models run <b>locally</b> after first setup.
+                Web search is optional.
+              </>
+            ) : (
+              <>
+                connecting to <b>local voice engines</b>…
+              </>
+            )}
           </div>
         )}
       </div>

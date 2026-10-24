@@ -26,6 +26,10 @@ LLM_IDLE_TTL = float(os.environ.get("LLM_IDLE_TTL", "1800"))
 LLM_THREADS = int(os.environ.get("LLM_THREADS", "0")) or min(
     8, max(4, (os.cpu_count() or 4) - 2)
 )
+# Keep the smart brain warm so the first chat answer isn't a cold load.
+LLM_SMART_RESIDENT = os.environ.get("LLM_SMART_RESIDENT", "1") not in (
+    "0", "false", "no",
+)
 
 KIKO_PERSONA = (
     "You are Kiko — a cheerful, helpful AI companion living on the user's laptop. "
@@ -37,6 +41,9 @@ KIKO_PERSONA = (
     "Never invent facts. If the user asks for current news or recent developments and web search is available, search before answering. "
     "If that search is unavailable, say so briefly and separate general background from current facts. "
     "Match the user's language: reply in Hindi if they write Hindi, English if English. "
+    "Never write Chinese, Japanese, Korean or Thai characters. "
+    "If the user's message looks garbled or unclear, like speech-recognition noise, "
+    "ask them to repeat it in one short clarifying question instead of repeating the unclear words. "
     "Never mention being a language model; you are Kiko."
 )
 
@@ -100,6 +107,8 @@ def _create_llama(model_path: Path, n_ctx: int = 2048):
         n_ctx=n_ctx,
         n_threads=LLM_THREADS,
         n_batch=512,
+        use_mmap=True,
+        use_mlock=False,
         verbose=False,
     )
 
@@ -133,7 +142,7 @@ manager.register(Engine(
     loader=(lambda: manager.get("llm_fast")) if _shared_brain
             else (lambda: _create_llama(_smart_path, n_ctx=4096)),
     unloader=(lambda _handle: None) if _shared_brain else _unloader,
-    resident=False,
+    resident=LLM_SMART_RESIDENT and not _shared_brain,
     idle_ttl=LLM_IDLE_TTL,
     model_info=f"{_smart_path.name} (llama.cpp, {LLM_THREADS} threads, smart RAG)",
 ))
@@ -166,6 +175,7 @@ def complete(messages: list[dict],
              max_tokens: int = 450,
              temperature: float = 0.7,
              repeat_penalty: float = 1.12,
+             min_p: float = 0.05,
              stop: list[str] | None = None,
              keep_code: bool = True,
              brain: str = "auto") -> str:
@@ -178,6 +188,7 @@ def complete(messages: list[dict],
             max_tokens=max_tokens,
             temperature=temperature,
             top_p=0.9,
+            min_p=min_p,
             repeat_penalty=repeat_penalty,
             stop=stop or [IM_END, "<|im_start|>"],
         )
@@ -189,6 +200,7 @@ def stream(messages: list[dict],
            max_tokens: int = 800,
            temperature: float = 0.7,
            repeat_penalty: float = 1.12,
+           min_p: float = 0.05,
            brain: str = "auto"):
     """Token-by-token completion for SSE chat. Yields raw deltas (uncleaned);
     think blocks are suppressed live, the caller strips emotion tags at the end."""
@@ -201,6 +213,7 @@ def stream(messages: list[dict],
             max_tokens=max_tokens,
             temperature=temperature,
             top_p=0.9,
+            min_p=min_p,
             repeat_penalty=repeat_penalty,
             stop=[IM_END, "<|im_start|>"],
             stream=True,

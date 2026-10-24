@@ -443,7 +443,16 @@ export default function ControlPanel(p: Props) {
       )}
       {p.timings && p.timings.length > 0 && (
         <div className="karaoke-strip">
-          <span className="note"><Volume2 size={11} /> speaking</span>
+          <div className="karaoke-badge">
+            <Volume2 size={11} className="pulse-icon" />
+            <span className="note">Speaking</span>
+            <div className="wave-bars mini-bars">
+              <span className="w-bar bar-1" />
+              <span className="w-bar bar-2" />
+              <span className="w-bar bar-3" />
+              <span className="w-bar bar-4" />
+            </div>
+          </div>
           <span className="karaoke">
             {p.timings.map((t, i) => (
               <span key={i}>
@@ -515,7 +524,13 @@ export default function ControlPanel(p: Props) {
             </button>
             {p.recording && (
               <span className="listening-live">
-                <span className="pulse-dot" /> listening…
+                <span className="pulse-dot" />
+                <span>listening…</span>
+                <div className="wave-bars mini-bars">
+                  <span className="w-bar bar-1" />
+                  <span className="w-bar bar-2" />
+                  <span className="w-bar bar-3" />
+                </div>
               </span>
             )}
           </div>
@@ -544,7 +559,13 @@ export default function ControlPanel(p: Props) {
             )}
             {p.recording && (
               <span className="listening-live">
-                <span className="pulse-dot" /> listening to question…
+                <span className="pulse-dot" />
+                <span>listening to question…</span>
+                <div className="wave-bars mini-bars">
+                  <span className="w-bar bar-1" />
+                  <span className="w-bar bar-2" />
+                  <span className="w-bar bar-3" />
+                </div>
               </span>
             )}
           </div>
@@ -775,22 +796,30 @@ function ChatIntro({ p }: { p: Props }) {
     chat: {
       Icon: MessageSquare,
       title: "Talk to Kiko",
-      sub: "For everyday questions and hands-free help: chat, use local tools, and hear Kiko speak.",
+      sub: "Hands-free voice companion, local neural reasoning, and on-device privacy.",
     },
-    voice: { Icon: Mic, title: "Voice studio", sub: "For creators and presenters: turn a script into local speech, choose a voice, and export the audio." },
-    docs: { Icon: Paperclip, title: "Ask your files", sub: "For students and researchers: upload a PDF, Word, or text file and get answers grounded in its contents." },
+    voice: { Icon: Mic, title: "Voice Studio", sub: "Turn scripts into natural speech with English and Hindi voices, speed tuning, and audio effects." },
+    docs: { Icon: Paperclip, title: "Ask Your Files", sub: "Offline document RAG: drop in a PDF, Word, or markdown file for grounded multi-turn voice Q&A." },
   };
   const c = copy[p.mode];
   return (
     <div className="chat-empty">
-      <div className="ce-emoji"><c.Icon size={40} strokeWidth={1.5} /></div>
-      <b>{c.title}</b>
-      <p>{c.sub}</p>
+      <div className="ce-emoji"><c.Icon size={38} strokeWidth={1.6} /></div>
+      <b className="ce-title">{c.title}</b>
+      <p className="ce-sub">{c.sub}</p>
       {p.mode === "chat" && (
         <div className="ce-suggestions">
-          {["hey kiko, what can you do?", "set a timer for 10 seconds", "tell me a joke"].map((s) => (
-            <button key={s} className="chip-suggest" onClick={() => p.onSendChat(s)}>
-              {s}
+          {[
+            { label: "hey kiko, what can you do?", desc: "Voice, tools, and memory overview" },
+            { label: "set a timer for 10 seconds", desc: "Live countdown chip & audio chime" },
+            { label: "tell me an interesting tech fact", desc: "Local LLM answer & neural speech" },
+          ].map((s) => (
+            <button key={s.label} className="chip-suggest" onClick={() => p.onSendChat(s.label)}>
+              <Sparkles size={13} className="chip-suggest-icon" />
+              <div className="chip-suggest-text">
+                <span className="chip-suggest-label">{s.label}</span>
+                <small className="chip-suggest-sub">{s.desc}</small>
+              </div>
             </button>
           ))}
         </div>

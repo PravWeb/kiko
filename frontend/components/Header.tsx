@@ -14,26 +14,20 @@ export default function Header({ status, onToggleEngineBay }: Props) {
     <header className="topbar">
       <div className="brand">
         <img className="brand-glyph" src="/kiko.png" alt="Kiko" draggable={false} />
-        <div>
-          <h1>KIKO</h1>
-          <small>offline voice companion · on-device AI</small>
+        <div className="brand-copy">
+          <div className="brand-title-row">
+            <span className="brand-name">KIKO</span>
+            <span className="brand-badge">VOICE AI</span>
+          </div>
+          <span className="brand-sub">on-device voice companion</span>
         </div>
       </div>
       <div className="status-row">
-        <span className={`chip ${status?.tts.ready ? "ok" : status ? "load" : ""}`}>
-          <span className="dot" />
-          TTS {status?.tts.ready ? "ready" : "loading"}
-        </span>
-        <span className={`chip ${status?.stt.ready ? "ok" : status ? "load" : ""}`}>
-          <span className="dot" />
-          STT {status?.stt.ready ? "ready" : "loading"}
-        </span>
-        <span className={`chip ${status?.llm.ready ? "ok" : status?.llm.available ? "load" : ""}`}>
-          <span className="dot" style={{ background: "var(--violet)" }} />
-          LLM {status?.llm.ready ? "ready" : status?.llm.available ? "loading" : "idle"}
-        </span>
-        <span className="chip privacy-chip" title="AI runs on this device. Optional web search sends your query to DuckDuckGo.">
-          <ShieldCheck size={11} className="privacy-icon" />
+        <span
+          className="chip privacy-chip"
+          title="AI runs 100% on this device. Microphone audio never leaves your machine."
+        >
+          <ShieldCheck size={12} className="privacy-icon" />
           Local AI
         </span>
         <EngineBay status={status} onToggle={onToggleEngineBay} />

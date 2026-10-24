@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import { chatStream, speakRequest } from "@/lib/api";
 import type { Msg } from "@/components/ControlPanel";
-import { cleanForSpeech } from "@/lib/speechClean";
+import { cleanForSpeech, pickVoice } from "@/lib/speechClean";
 import { nextMessageId } from "@/lib/messageIds";
 
 type PlayBlob = (blob: Blob, url?: string, dur?: number, text?: string, karaoke?: boolean) => Promise<void>;
@@ -153,7 +153,7 @@ export function useChat({
           try {
             const { blob, duration } = await speakRequest({
               text: spoken,
-              voice: lang === "hi" && !voice.startsWith("h") ? "hf_alpha" : voice,
+              voice: pickVoice(spoken, voice, lang),
               speed: 1,
             });
             const url = URL.createObjectURL(blob);

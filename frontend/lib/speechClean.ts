@@ -25,3 +25,15 @@ export function cleanForSpeech(text: string, maxLen = 2500): string {
     .trim()
     .slice(0, maxLen);
 }
+
+const DEVANAGARI = /[\u0900-\u097F]/;
+
+/**
+ * Pick a Hindi voice for Hindi text, so Devanagari replies sound right even
+ * when the Hindi chat toggle is off. Voices starting with "h" are Hindi
+ * (hf_alpha, hm_omega, ...) and are always kept as-is.
+ */
+export function pickVoice(text: string, voice: string, lang?: string): string {
+  if (voice.startsWith("h")) return voice;
+  return lang === "hi" || DEVANAGARI.test(text) ? "hf_alpha" : voice;
+}

@@ -1,70 +1,116 @@
-# Kiko — Local AI Voice Companion
+# Kiko
 
-**Kiko** lives on your laptop. She talks and listens, sets timers, does math, remembers user-approved facts, creates voiceovers, and answers questions about your documents. Core voice, chat, and document features run locally with no API keys; optional web search needs internet.
+**A private, voice-first AI companion that runs on your computer.** Kiko listens, speaks, answers questions, works with your documents, and remembers facts you choose to save. Speech recognition, speech generation, and language models run locally. Optional web search needs an internet connection and sends the search query to DuckDuckGo.
 
-Runs on CPU: voice synthesis, speech recognition, and the LLM brain load locally. The ASUS i5-13420H / 16 GB configuration you’re considering is the target setup; benchmark it on the actual laptop before quoting latency numbers.
+[Source code](https://github.com/PravWeb/kiko) · [Demo guide](HACKATHON_DEMO.md)
 
-## Quick start
+## What you can do
+
+- **Chat by voice or text.** Hear spoken replies, use English or Hindi, and interrupt live voice replies by speaking over them.
+- **Use a hands-free conversation loop.** Kiko can listen again after each reply.
+- **Create voiceovers.** Turn a script into speech, choose a voice and speed, apply an audio effect, and download the result.
+- **Ask questions about documents.** Upload Markdown, PDF, or DOCX files and ask follow-up questions grounded in their contents. Kiko can also summarize a document.
+- **Use built-in tools.** Set timers, do calculations and unit conversions, check the time and date, and save or remove user-approved memories.
+- **Keep chat history and export it.** Sessions stay in this browser; export a transcript as Markdown or a ZIP containing audio clips.
+- **Connect through MCP.** Kiko provides a local Streamable HTTP MCP endpoint for speech generation, current-session document search, runtime status, skills, and project information.
+
+## How it works
+
+Kiko has a Next.js frontend and a FastAPI backend. The backend serves the static frontend and API on the same local server. Model inference runs on the CPU using local model files:
+
+| Capability | Technology / model |
+|---|---|
+| Speech synthesis | Kokoro-82M via `kokoro-onnx` and ONNX Runtime |
+| Speech recognition | `faster-whisper` with Whisper `small`, CPU int8 |
+| Chat and document answers | Qwen3 GGUF models via `llama-cpp-python`: 0.6B Fast and 1.7B Smart |
+| Document retrieval | BM25 with PDF and DOCX/Markdown text extraction |
+| API server | FastAPI and Uvicorn |
+| Optional web search | DuckDuckGo via `ddgs`; requires internet |
+| Interoperability | Model Context Protocol (MCP), Streamable HTTP |
+
+Kiko does not call hosted Gemini, OpenAI, or other cloud LLM APIs for core chat, speech, or document Q&A. Web search is the optional network feature; its query is sent to DuckDuckGo. Conversations and uploaded files are handled by the local app.
+
+## Run Kiko
+
+### Windows
+
+Run `start.bat` from the project folder. It starts the backend and serves the static frontend from `frontend/out/`. The repository includes a portable Windows setup path that uses bundled Python tools and offline wheels when available. Check the startup messages for missing dependencies or model files.
+
+If you changed frontend source files and want to refresh the static UI, build it before launching:
+
+```powershell
+npm.cmd --prefix frontend install
+npm.cmd --prefix frontend run build
+```
+
+Alternatively, `restart.bat` rebuilds the frontend and restarts the server.
+
+### Linux and macOS
+
+Run the setup and launcher:
 
 ```bash
-./start.sh      # Linux / macOS
-start.bat       # Windows
+./start.sh
 ```
 
-First launch downloads the models once, then speech and chat run locally. Model downloads are roughly **1.3 GB with the 0.6B brain** or **2.5 GB with the 1.7B brain**, plus Python/Node dependencies. Web search is optional and needs an internet connection.
+The script installs `uv` if needed, downloads the Kokoro model files, offers the Qwen3 model download when run interactively, installs Python dependencies, builds the frontend, and starts the backend. The first setup needs internet access. Whisper `small` weights are downloaded on first use if they are not already cached.
 
-### On the ASUS ExpertBook P1 you linked
+### Manual development setup
 
-The i5-13420H and 16 GB RAM are a reasonable target for Kiko's CPU-only setup. Text Chat defaults to the **1.7B Smart brain** for better answers; live Voice uses the **0.6B Fast brain** for lower latency. You can switch Chat to Fast when speed matters more. Actual speed depends on model warm-up, system load, and laptop power/thermal settings. On Windows 11, launch `start.bat`; keep internet available for the first setup and model download.
+Requirements: Python 3.12+, Node.js/npm, and the model files described below.
 
-## What Kiko can do
-
-| Mode | What happens |
-|---|---|
-| 💬 **Chat** | Talk or type, she replies out loud with lip-sync + emotion; flip to **हिंदी** and she answers in Devanagari spoken by a Hindi voice; tools: timers, math, time/date, memory |
-| 🎙 **Voice Studio** | For creators and presenters: turn scripts into local speech with English and Hindi voices, speed control, and audio effects |
-| ⏱ **Timers** | Natural language: *"set a timer for 5 minutes called chai"* — countdown chips + chime |
-| 📎 **Ask the doc (Voice & Multi-Turn RAG)** | Add a **.md / .pdf / .docx** file — she parses it fully offline, indexes it with BM25, and enables multi-turn conversation. Ask questions by typing or by tapping the microphone; she answers grounded on the text and speaks the reply aloud; one-click summarize |
-| ∞ **Hands-free loop** | Auto-listen after each reply for a continuous voice conversation |
-| 🧭 **Local skills** | Study, writing, and planning workflows are selected from small `SKILL.md` files when relevant; no extra model or cloud call |
-| ⚡ **Live voice (streaming)** | Tap the mic: VAD turn-taking over a WebSocket — no chat/record buttons. Reply audio is synthesized sentence by sentence while the model continues generating; talking over her **barge-ins** mid-sentence |
-| 🗂 **Chat history** | Start new chats, switch between saved sessions, and delete old sessions; history stays in this browser |
-| 💾 **Session export** | Transcript as Markdown or a .zip with every audio clip |
-| 🔌 **MCP** | Local speech generation, uploaded-document search, runtime status, project tools/resources; optionally connect one trusted Streamable HTTP MCP server |
-
-## Tech
-
-- **Backend:** FastAPI · Dual-Brain Engine Architecture · BM25 multi-turn doc-RAG (docslib, pypdf) · `kokoro-onnx` (Kokoro-82M fp16) for TTS · `faster-whisper small int8` for STT · `llama-cpp-python` (Qwen3-0.6B for live voice + Qwen3-1.7B for text chat and RAG) · lazy model manager with idle-unload
-- **Frontend:** Next.js static export · minimal ambient stage UI · single `uvicorn` serves UI + API, works after the build with any static server
-- **Privacy:** speech and core chat inference run locally; mic audio stays on the machine. Optional web search sends the text query to DuckDuckGo.
-- **Skills:** add a folder with a `SKILL.md` under `backend/skills/`; Kiko selects one matching workflow per turn to keep the small model's prompt focused. `GET /api/skills` lists installed skill metadata.
-- **Memory:** explicit “my name is …” and “remember that …” requests are saved locally when tools are enabled. Passwords, credentials, medical details, and contact details are excluded; review or delete facts in the Memory panel.
-- **MCP server:** Streamable HTTP is available at `http://127.0.0.1:8000/mcp`. It exposes local Kokoro speech generation, search over documents uploaded in the running Kiko session, model/runtime status, skills, project overview, and README/demo-guide search. It does not expose arbitrary files or shell access. Check `/api/mcp` for status.
-- **Chat shortcut:** enter `/mcp` in Chat for the endpoint and connection instructions; ask for MCP-backed tasks in plain language.
-- **MCP client:** both launchers connect chat to Kiko's local endpoint by default. Set `KIKO_MCP_URL` before launch to use one trusted Streamable HTTP MCP server instead. Tool calls have a timeout and output cap, and server-provided descriptions/results are treated as untrusted data. A remote server may require network access.
-- **Startup:** `start.bat` and `start.sh` rebuild the static UI when source files are newer than the last build, so launching after an update won't silently show an old interface.
-
-## Model credits
-
-- Speech synthesis: **Kokoro-82M** (Apache-2.0)
-- Speech recognition: **faster-whisper** on OpenAI Whisper `small`
-- Dual Language Model Brain:
-  - **Fast Brain:** `Qwen3-0.6B-Q8_0` for lower-latency voice conversations and quick turns
-  - **Smart Brain:** `Qwen3-1.7B-Q8_0` for larger prompts, multi-turn RAG, and summarization
-- Fonts/emoji: system stack; emoji glyphs.
-
-## Folder layout
-
-```
-backend/        FastAPI app, llm/agent/nlp/tools/skills modules, model manager
-backend/models/ Kokoro ONNX + voice data + Qwen GGUF (downloaded on first run)
-frontend/       Next.js (static export → out/)
-.hf-cache/      Whisper weights (created on first STT load)
-start.sh|.bat   one-time setup + launch
+```bash
+cd frontend
+npm install
+npm run build
+cd ../backend
+uv sync
+uv run uvicorn main:app --host 127.0.0.1 --port 8000
 ```
 
-## Notes
+Then open [http://localhost:8000](http://localhost:8000). For frontend development with hot reload, run `npm run dev` in `frontend` separately; the backend API remains on port 8000.
 
-- The fast brain pre-warms at startup and remains resident; the smart brain loads on first use and auto-unloads after 30 minutes idle by default.
-- Voice generation now overlaps sentence synthesis with model streaming. The live voice `done` event reports `first_audio_ms`; measure it and total duration on the target laptop before presenting benchmark numbers.
-- The 0.6B brain is small: English is solid, Hindi generation is best-effort.
+## Model files
+
+Place model files in `backend/models/`:
+
+- `kokoro-v1.0.fp16.onnx` and `voices-v1.0.bin` for speech generation. The Linux/macOS launcher downloads these automatically when missing.
+- `Qwen3-1.7B-Q8_0.gguf` for the Smart brain, or `Qwen3-0.6B-Q8_0.gguf` for the smaller Fast brain. The launcher can download one on first setup.
+- Whisper `small` is cached under `.hf-cache/` (or the configured Hugging Face cache) on first use.
+
+The 1.7B model provides the Smart brain for text chat and document questions. The 0.6B model is the lighter Fast brain used for lower-latency live voice. Available models and memory requirements depend on the machine; no latency figures are claimed here.
+
+## Privacy and network use
+
+- Speech synthesis, speech recognition, chat inference, and document retrieval use local models and run on the machine.
+- Uploaded documents are indexed for use by the running local app. Chat history and saved memories are stored in this browser/local app setup.
+- Optional web search requires internet and sends the search text to DuckDuckGo.
+- First-time dependency and model setup may download packages and model weights.
+- The local MCP endpoint is `http://127.0.0.1:8000/mcp`. Do not expose it to an untrusted network.
+
+## Configuration and useful endpoints
+
+- `KIKO_MCP_URL` configures a trusted Streamable HTTP MCP server for the chat agent. By default, it points to Kiko's own local endpoint.
+- `HF_HOME` controls the local Hugging Face model cache. The launchers set a project-local cache where appropriate.
+- `GET /api/mcp` reports MCP client status.
+- `GET /api/skills` lists local skill metadata.
+
+## Repository layout
+
+```text
+backend/       FastAPI routes, agent, local models, tools, skills, and MCP server
+frontend/      Next.js application and static export configuration
+sample_docs/   Sample documents for trying document Q&A
+HACKATHON_DEMO.md  Short demo outline and measurement guidance
+start.bat      Windows launcher
+start.sh       Linux/macOS setup and launcher
+restart.bat    Windows rebuild and restart helper
+```
+
+## Demo
+
+There is no hosted demo link in this repository. See [HACKATHON_DEMO.md](HACKATHON_DEMO.md) for a walkthrough and a checklist for measuring behavior on the target machine.
+
+## License
+
+No repository-level license file is currently included. Check with the maintainers before reusing or redistributing the project.

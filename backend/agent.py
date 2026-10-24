@@ -39,23 +39,35 @@ VALID_EMOTIONS = {
 
 def _finish(messages: list[dict], raw: str, tool_calls: list[dict],
             started: float, lang: str,
-            active_skills: list[str] | None = None) -> dict:
+            active_skills: list[str] | None = None,
+            brain: str = "auto") -> dict:
     reply, emotion = _strip_emotion(raw)
-    reply = reply.strip().strip('"').strip()
+    reply = _strip_cjk(reply.strip().strip('"').strip())
     # last-resort: if reply is still JSON, replace
     if reply.strip().startswith(("{", "[")):
         reply = "हो गया जी!" if lang == "hi" else "Done!"
-    # Hindi mode: one retry when the model slipped into pure English
-    if lang == "hi" and reply and not _HAS_DEVA.search(reply):
+    # one retry when the reply came out in the wrong script
+    if lang == "hi" and not _HAS_DEVA.search(reply):
         nudge = messages + [{
             "role": "user",
             "content": " जवाब हिंदी में दो (देवनागरी में लिखो). एक छोटी लाइन.",
         }]
         raw2 = complete(nudge, max_tokens=140, temperature=0.6,
-                        repeat_penalty=1.15)
+                        repeat_penalty=1.15, brain=brain)
         r2, e2 = _strip_emotion(raw2)
-        r2 = r2.strip().strip('"').strip()
+        r2 = _strip_cjk(r2.strip().strip('"').strip())
         if r2 and not r2.startswith(("{", "[")) and _HAS_DEVA.search(r2):
+            reply, emotion = r2, e2
+    elif lang == "en" and (not reply or _HAS_DEVA.search(reply)):
+        nudge = messages + [{
+            "role": "user",
+            "content": "Reply in English only (Latin script). One short line.",
+        }]
+        raw2 = complete(nudge, max_tokens=160, temperature=0.5,
+                        repeat_penalty=1.15, brain=brain)
+        r2, e2 = _strip_emotion(raw2)
+        r2 = _strip_cjk(r2.strip().strip('"').strip())
+        if r2 and not r2.startswith(("{", "[")) and not _HAS_DEVA.search(r2):
             reply, emotion = r2, e2
     for label in ("किको:", "किको :", "उपयोगकर्ता:", "Kiko:"):
         if reply.startswith(label):
@@ -254,15 +266,51 @@ def _lang_rule(lang: str) -> str:
         return (
             " CRITICAL: Write your ENTIRE reply ONLY in Hindi, Devanagari "
             "script, never English sentences. Tool names may stay English."
+            " Never use Chinese, Japanese, Korean or Thai characters."
+            " Use natural, common Hindi words; if unsure of a Hindi word, "
+            "use a simple English word instead of inventing one."
             "Examples:"
             "उपयोगकर्ता: नमस्ते, आप कैसी हैं? → किको: नमस्ते जी! मैं बढ़िया हूँ, आपको सुनकर अच्छा लगा।"
             "उपयोगकर्ता: मुझे पाँच मिनट का टाइमर सेट करो → किको: पाँच मिनट का टाइमर सेट हो गया जी!"
             "उपयोगकर्ता: आज मौसम कैसा है? → किको: मैं ऑफ़लाइन हूँ, मगर बाहर देखकर बता जी!"
         )
+    if lang == "en":
+        return (
+            " CRITICAL: Write your ENTIRE reply ONLY in English, Latin script, "
+            "even if earlier messages were in Hindi or look garbled. "
+            "Never use Devanagari or Chinese, Japanese, Korean, Thai characters."
+        )
     return ""
 
 
 _HAS_DEVA = re.compile(r"[\u0900-\u097F]")
+_CJK_RE = re.compile(
+    r"[\u2E80-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF\uFE30-\uFE4F"
+    r"\uFF00-\uFFEF\u0E00-\u0E7F]+"
+)
+
+
+def _strip_cjk(text: str) -> str:
+    """Drop Chinese/Japanese/Korean/Thai runs the small model sometimes leaks."""
+    if not text:
+        return ""
+    return re.sub(r"[ \t]{2,}", " ", _CJK_RE.sub(" ", text)).strip()
+
+
+def _effective_lang(message: str, lang: str) -> str:
+    """Language toggle wins; Devanagari input always gets Hindi back."""
+    if lang == "hi":
+        return "hi"
+    return "hi" if _HAS_DEVA.search(message or "") else "en"
+
+
+def _lang_remind(lang: str) -> str:
+    """Short rule placed right before generation, after the history."""
+    if lang == "hi":
+        return ("OUTPUT RULE: reply ONLY in Hindi in Devanagari script; "
+                "no English sentences and no Chinese/Japanese/Korean characters.")
+    return ("OUTPUT RULE: reply ONLY in English in Latin script; "
+            "no Devanagari and no Chinese/Japanese/Korean characters.")
 
 
 def _context_block(chunks: list[str]) -> str:
@@ -313,7 +361,7 @@ def chat_with_context(question: str, chunks: list[str],
     raw = complete(messages, max_tokens=650, temperature=0.6,
                    repeat_penalty=1.12, keep_code=True, brain=brain)
     reply, emotion = _strip_emotion(raw)
-    reply = reply.strip().strip('"').strip()
+    reply = _strip_cjk(reply.strip().strip('"').strip())
     for label in ("किको:", "Kiko:"):
         if reply.startswith(label):
             reply = reply[len(label):].lstrip()
@@ -395,7 +443,7 @@ def chat_with_context_stream(question: str, chunks: list[str],
             return
         raw = "".join(raw_parts)
         reply, emotion = _strip_emotion(raw)
-        reply = reply.strip().strip('"').strip()
+        reply = _strip_cjk(reply.strip().strip('"').strip())
         for label in ("किको:", "Kiko:"):
             if reply.startswith(label):
                 reply = reply[len(label):].lstrip()
@@ -427,16 +475,18 @@ def chat(message: str, history: list[dict],
          allow_tools: bool = True, lang: str = "en",
          brain: str = "smart", websearch_enabled: bool = False) -> dict:
     """One agent turn: optional tool call + final spoken reply."""
+    eff_lang = _effective_lang(message, lang)
     selected_skills = skills.select(message)
     active_skills = [s["name"] for s in selected_skills]
-    sys_prompt = _chat_system_prompt(lang, selected_skills, allow_tools)
+    sys_prompt = _chat_system_prompt(eff_lang, selected_skills, allow_tools)
     messages = [{"role": "system", "content": sys_prompt}]
     for h in history[-8:]:
         role = "assistant" if h.get("who") == "kiko" else "user"
         content = str(h.get("text", ""))[:500]
         if content:
             messages.append({"role": role, "content": content})
-    messages.append({"role": "user", "content": message[:1500]})
+    messages.append({"role": "user",
+                     "content": message[:1500] + "\n\n" + _lang_remind(eff_lang)})
 
     tool_calls: list[dict] = []
     started = time.time()
@@ -464,7 +514,7 @@ def chat(message: str, history: list[dict],
             })
 
     for round_i in range(2):
-        raw = complete(messages, max_tokens=450, temperature=0.7,
+        raw = complete(messages, max_tokens=450, temperature=0.6,
                        repeat_penalty=1.15, keep_code=True, brain=brain)
         tool = _extract_tool(raw) if (allow_tools and round_i == 0 and not websearch_enabled) else None
         if tool and not _is_tool_relevant(tool[0], message):
@@ -483,7 +533,8 @@ def chat(message: str, history: list[dict],
                                repeat_penalty=1.15, keep_code=True, brain=brain)
                 if _extract_tool(raw) is not None:
                     raw = "Done!"
-            return _finish(messages, raw, tool_calls, started, lang, active_skills)
+            return _finish(messages, raw, tool_calls, started, eff_lang,
+                           active_skills, brain=brain)
         name, args = tool
         result = _execute_tool(name, args)
         tool_calls.append({"tool": name, "args": args, "result": result})
@@ -497,7 +548,8 @@ def chat(message: str, history: list[dict],
                        "Do NOT output JSON.",
         })
 
-    return _finish(messages, raw, tool_calls, started, lang, active_skills)
+    return _finish(messages, raw, tool_calls, started, eff_lang,
+                   active_skills, brain=brain)
 
 
 def chat_stream(message: str, history: list[dict],
@@ -505,16 +557,20 @@ def chat_stream(message: str, history: list[dict],
                 brain: str = "smart", websearch_enabled: bool = False,
                 voice_mode: bool = False):
     """Streaming variant for the text-chat UI with masked tool calls."""
+    # Voice keeps the explicit toggle (its mic/TTS follow it); text chat
+    # follows the actual script of the message so mixed sessions stay coherent.
+    eff_lang = lang if voice_mode else _effective_lang(message, lang)
     selected_skills = skills.select(message)
     active_skills = [s["name"] for s in selected_skills]
-    sys_prompt = _chat_system_prompt(lang, selected_skills, allow_tools, voice_mode)
+    sys_prompt = _chat_system_prompt(eff_lang, selected_skills, allow_tools, voice_mode)
     messages = [{"role": "system", "content": sys_prompt}]
     for h in history[-8:]:
         role = "assistant" if h.get("who") == "kiko" else "user"
         content = str(h.get("text", ""))[:500]
         if content:
             messages.append({"role": role, "content": content})
-    messages.append({"role": "user", "content": message[:1500]})
+    messages.append({"role": "user",
+                     "content": message[:1500] + "\n\n" + _lang_remind(eff_lang)})
 
     started = time.time()
     tool_calls: list[dict] = []
@@ -563,7 +619,7 @@ def chat_stream(message: str, history: list[dict],
 
         try:
             for delta in llm_stream(messages, max_tokens=800,
-                                    temperature=0.7, repeat_penalty=1.12,
+                                    temperature=0.6, repeat_penalty=1.12,
                                     brain=brain):
                 if not delta:
                     continue
@@ -630,9 +686,10 @@ def chat_stream(message: str, history: list[dict],
             raw = complete(messages, max_tokens=200, temperature=0.6,
                            repeat_penalty=1.15, brain=brain)
             if _extract_tool(raw) is not None:
-                raw = "हो गया जी!" if lang == "hi" else "Done!"
+                raw = "हो गया जी!" if eff_lang == "hi" else "Done!"
             yield {"type": "final", **_finish(messages, raw, tool_calls,
-                                              started, lang, active_skills)}
+                                              started, eff_lang, active_skills,
+                                              brain=brain)}
             return
 
         if buffered_deltas:
@@ -640,6 +697,7 @@ def chat_stream(message: str, history: list[dict],
                 yield {"type": "delta", "t": d}
 
         yield {"type": "final", **_finish(messages, raw, tool_calls,
-                                          started, lang, active_skills)}
+                                          started, eff_lang, active_skills,
+                                          brain=brain)}
 
     return gen()

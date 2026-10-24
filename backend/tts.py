@@ -1,12 +1,16 @@
 """Kokoro-82M TTS engine (ONNX, CPU)."""
 
 import io
+import os
 import threading
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
-from kokoro_onnx import Kokoro
+
+TTS_THREADS = int(os.environ.get("TTS_THREADS", "0")) or min(
+    8, max(2, (os.cpu_count() or 4) - 1)
+)
 
 MODELS_DIR = Path(__file__).parent / "models"
 MODEL_PATH = MODELS_DIR / "kokoro-v1.0.fp16.onnx"
@@ -39,14 +43,24 @@ _PREFIX_LANG = {
 MAX_TEXT_LEN = 4000
 
 _lock = threading.Lock()
-_kokoro: Kokoro | None = None
+_kokoro = None
 
 
 def load() -> None:
     global _kokoro
     with _lock:
         if _kokoro is None:
-            _kokoro = Kokoro(str(MODEL_PATH), str(VOICES_PATH))
+            from kokoro_onnx import Kokoro
+            import onnxruntime as ort
+
+            so = ort.SessionOptions()
+            so.intra_op_num_threads = TTS_THREADS
+            so.inter_op_num_threads = 1
+            so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            sess = ort.InferenceSession(
+                str(MODEL_PATH), sess_options=so, providers=["CPUExecutionProvider"]
+            )
+            _kokoro = Kokoro.from_session(sess, str(VOICES_PATH))
 
 
 def unload() -> None:

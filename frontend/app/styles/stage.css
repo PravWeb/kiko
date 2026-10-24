@@ -14,7 +14,7 @@
   height: 100%;
   max-height: 100%;
   min-width: 0;
-  max-width: 1100px;
+  max-width: 1180px;
   margin: 0 auto;
   width: 100%;
   overflow: hidden;
@@ -26,28 +26,62 @@
 /* now-speaking karaoke strip (above composer) */
 .karaoke-strip {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
-  padding: 8px 14px;
-  border-top: 1px solid var(--stroke);
-  background: rgba(8, 10, 18, 0.35);
-  min-height: 36px;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border-top: 1px solid rgba(34, 211, 238, 0.22);
+  background: linear-gradient(90deg, rgba(34, 211, 238, 0.09) 0%, rgba(13, 16, 30, 0.8) 100%);
+  min-height: 38px;
   flex-wrap: wrap;
+  backdrop-filter: blur(12px);
+  animation: stripFadeIn 0.25s ease-out;
 }
-.karaoke-strip .note {
-  font-family: var(--font-geist-mono), monospace;
-  font-size: 9px;
-  letter-spacing: 1.8px;
-  text-transform: uppercase;
-  color: var(--ink-faint);
+@keyframes stripFadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.karaoke-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(34, 211, 238, 0.12);
+  border: 1px solid rgba(34, 211, 238, 0.3);
+  color: var(--cyan);
   flex-shrink: 0;
 }
-.karaoke { display: inline; }
+.karaoke-badge .note {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--cyan);
+}
+.karaoke-badge .pulse-icon {
+  animation: pulse 1.2s infinite;
+}
+
+.karaoke {
+  display: inline;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
 .karaoke-word {
   display: inline-block;
   margin-right: 4px;
   color: var(--ink-dim);
-  transition: color 0.15s;
+  transition: all 0.15s ease;
 }
-.karaoke-word.active { color: var(--cyan); }
-.karaoke-word.done { color: var(--ink); }
+.karaoke-word.active {
+  color: #fff;
+  font-weight: 600;
+  text-shadow: 0 0 10px rgba(34, 211, 238, 0.85), 0 0 20px rgba(34, 211, 238, 0.5);
+  transform: scale(1.04);
+}
+.karaoke-word.done {
+  color: var(--ink);
+  opacity: 0.9;
+}
